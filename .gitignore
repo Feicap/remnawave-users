@@ -26,3 +26,10 @@ frontend/.vite/
 *.log
 *.tmp
 *.temp
+
+# Root env files
+.env
+.env.prod
+
+# Kubernetes
+k8s/backend-secret.yaml

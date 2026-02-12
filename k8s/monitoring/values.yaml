@@ -1,0 +1,26 @@
+grafana:
+  adminPassword: "change-me"
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - grafana.example.com
+    tls:
+      - secretName: grafana-tls
+        hosts:
+          - grafana.example.com
+  defaultDashboardsTimezone: utc
+
+prometheus:
+  ingress:
+    enabled: false
+
+alertmanager:
+  enabled: true
+
+kube-state-metrics:
+  enabled: true
+
+nodeExporter:
+  enabled: true
+

@@ -5,6 +5,7 @@ Django settings for config project.
 import os
 from pathlib import Path
 
+import dj_database_url
 from django.core.management.utils import get_random_secret_key
 from dotenv import load_dotenv
 
@@ -58,12 +59,28 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+database_url = os.getenv("DATABASE_URL", "").strip()
+db_ssl_require = os.getenv("DJANGO_DB_SSL_REQUIRE", "True" if not DEBUG else "False").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+if database_url:
+    DATABASES = {
+        "default": dj_database_url.parse(
+            database_url,
+            conn_max_age=600,
+            ssl_require=db_ssl_require,
+        )
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -86,8 +103,13 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
-STATICFILES_DIRS = [
-    PROJECT_ROOT / "frontend" / "dist" / "assets",
+STATIC_ROOT = PROJECT_ROOT / "backend" / "staticfiles"
+frontend_assets_dir = PROJECT_ROOT / "frontend" / "dist" / "assets"
+STATICFILES_DIRS = [frontend_assets_dir] if frontend_assets_dir.exists() else []
+
+csrf_trusted_origins_raw = os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "")
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip() for origin in csrf_trusted_origins_raw.split(",") if origin.strip()
 ]
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
