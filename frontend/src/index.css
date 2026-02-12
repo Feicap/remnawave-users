@@ -1,17 +1,16 @@
-/* .root{--bg:#0b1220;--fg:#e6eef8;--muted:#98a8bf}
-:root{--bg:#0b1220;--fg:#e6eef8;--muted:#98a8bf}
-html,body,#root{height:100%}
-body{margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
-/* .app{display:flex;flex-direction:column;height:100%;width:100%;margin:0;padding:0;box-sizing:border-box;align-items:stretch} */
-
-/* @import "tailwindcss";
+@import "tailwindcss";
 @plugin "@tailwindcss/forms";
-@plugin "@tailwindcss/container-queries"; */
+@plugin "@tailwindcss/container-queries";
 
-.app aside{display:none}
-@media (min-width: 768px){
-  .app aside{display:flex;flex-shrink:0;width:16rem}
-  .app .flex-1{min-width:0}
+html, body, #root {
+  height: 100%;
 }
-h1{margin:0 0 .25rem}
-code{background:#071327;padding:.1rem .4rem;border-radius:6px;color:var(--muted)}
+
+body {
+  margin: 0;
+}
+
+.material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+  font-size: 24px;
+}
