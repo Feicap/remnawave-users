@@ -113,8 +113,23 @@ prepare_env_files() {
 
   local db_url
   local ssl_require
+  local db_password
   db_url="$(grep -E '^DATABASE_URL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
   ssl_require="$(grep -E '^DJANGO_DB_SSL_REQUIRE=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  db_password=""
+
+  if [[ "$db_url" =~ ^postgres(ql)?://[^:]+:([^@]+)@ ]]; then
+    db_password="${BASH_REMATCH[2]}"
+  fi
+
+  if [ -n "$db_password" ]; then
+    if grep -qE '^POSTGRES_PASSWORD=' "$APP_DIR/.env.prod"; then
+      sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$db_password|" "$APP_DIR/.env.prod"
+    else
+      echo "POSTGRES_PASSWORD=$db_password" >> "$APP_DIR/.env.prod"
+    fi
+    log "Synchronized POSTGRES_PASSWORD with DATABASE_URL"
+  fi
 
   if [[ "$db_url" == *"@postgres:"* ]] && [[ "${ssl_require,,}" != "false" ]]; then
     if grep -qE '^DJANGO_DB_SSL_REQUIRE=' "$APP_DIR/.env.prod"; then
