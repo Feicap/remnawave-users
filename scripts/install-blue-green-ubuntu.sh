@@ -174,6 +174,7 @@ deploy_target_color() {
   log "Deploying ${TARGET_COLOR} (backend:${TARGET_BACKEND_PORT}, frontend:${TARGET_FRONTEND_PORT})"
   docker compose \
     --env-file "$ENV_FILE" \
+    --project-directory "$APP_DIR" \
     -p "remnawave-${TARGET_COLOR}" \
     -f "$TARGET_COMPOSE" \
     up -d --build --remove-orphans
@@ -252,6 +253,7 @@ stop_old_color() {
   log "Stopping old color: ${OLD_COLOR}"
   docker compose \
     --env-file "$ENV_FILE" \
+    --project-directory "$APP_DIR" \
     -p "remnawave-${OLD_COLOR}" \
     -f "$old_compose" \
     down || true
@@ -261,6 +263,7 @@ summary() {
   log "Done. Active color: ${TARGET_COLOR}"
   docker compose \
     --env-file "$ENV_FILE" \
+    --project-directory "$APP_DIR" \
     -p "remnawave-${TARGET_COLOR}" \
     -f "$TARGET_COMPOSE" \
     ps
