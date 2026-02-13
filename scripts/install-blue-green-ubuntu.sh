@@ -165,6 +165,9 @@ wait_http() {
   local i
 
   for i in $(seq 1 "$max_tries"); do
+    if (( i == 1 || i % 5 == 0 )); then
+      log "Health check attempt $i/$max_tries for $url"
+    fi
     if [ -n "$host_header" ]; then
       if curl -fsS -m 3 -H "Host: $host_header" -o /dev/null "$url" 2>/dev/null; then
         return 0
