@@ -668,11 +668,8 @@ confirm_action() {
 
 print_menu() {
   local active=""
-  local blue_label="blue"
-  local green_label="green"
-  local blue_suffix=""
-  local green_suffix=""
-  local rollback_blue_label="Откат изменений (blue)"
+  local rollback_target=""
+  local rollback_label=""
   local install_hint=""
 
   if [ -f "$ACTIVE_FILE" ]; then
@@ -681,26 +678,31 @@ print_menu() {
 
   if [ "$active" = "blue" ]; then
     install_hint=" (установит обновление на green)"
+    rollback_target="green"
   elif [ "$active" = "green" ]; then
     install_hint=" (установит обновление на blue)"
+    rollback_target="blue"
   else
     install_hint=" (установит обновление на blue)"
-  fi
-
-  if [ "$active" = "green" ]; then
-    green_suffix=" (active)"
-  fi
-  if [ "$active" = "blue" ]; then
-    blue_suffix=" (active)"
-    rollback_blue_label="Откат изменений (blue) (уже active)"
+    rollback_target=""
   fi
 
   menu_print ""
+  if [ "$active" = "blue" ] || [ "$active" = "green" ]; then
+    menu_print "${COLOR_YELLOW}Сайт развёрнут на ${active}${COLOR_RESET}"
+  else
+    menu_print "${COLOR_YELLOW}Сайт ещё не развёрнут${COLOR_RESET}"
+  fi
   menu_print "${COLOR_YELLOW}Выберите действие:${COLOR_RESET}"
   menu_item "1" "Установка сайта${install_hint}"
-  menu_item "2" "${rollback_blue_label}"
-  menu_item "3" "${green_label}${green_suffix}"
-  menu_item "4" "Удалить изменения"
+
+  if [ -n "$rollback_target" ]; then
+    rollback_label="Откат изменений (${rollback_target})"
+  else
+    rollback_label="Откат изменений (недоступно)"
+  fi
+  menu_item "2" "${rollback_label}"
+  menu_item "3" "Удалить изменения"
   menu_item "0" "Выход из скрипта"
 }
 
@@ -726,39 +728,33 @@ main() {
         if site_installed; then
           get_active_color
           if [ "$ACTIVE_COLOR" = "blue" ]; then
-            log "blue уже активен"
-          elif color_stack_exists "blue" "$BLUE_BACKEND_PORT" "$BLUE_FRONTEND_PORT"; then
-            if confirm_action "Переключить трафик на blue (rollback)?"; then
-              switch_existing_flow "blue"
+            if color_stack_exists "green" "$GREEN_BACKEND_PORT" "$GREEN_FRONTEND_PORT"; then
+              if confirm_action "Переключить трафик на green (rollback)?"; then
+                switch_existing_flow "green"
+              else
+                log "Операция отменена"
+              fi
             else
-              log "Операция отменена"
+              err "green не развернут"
+            fi
+          elif [ "$ACTIVE_COLOR" = "green" ]; then
+            if color_stack_exists "blue" "$BLUE_BACKEND_PORT" "$BLUE_FRONTEND_PORT"; then
+              if confirm_action "Переключить трафик на blue (rollback)?"; then
+                switch_existing_flow "blue"
+              else
+                log "Операция отменена"
+              fi
+            else
+              err "blue не развернут"
             fi
           else
-            err "blue не развернут"
+            err "Нет активного цвета для отката"
           fi
         else
           err "Сайт не установлен"
         fi
         ;;
       3)
-        if site_installed; then
-          get_active_color
-          if [ "$ACTIVE_COLOR" = "green" ]; then
-            log "green уже активен"
-          elif color_stack_exists "green" "$GREEN_BACKEND_PORT" "$GREEN_FRONTEND_PORT"; then
-            if confirm_action "Переключить трафик на green (rollback)?"; then
-              switch_existing_flow "green"
-            else
-              log "Операция отменена"
-            fi
-          else
-            err "green не развернут"
-          fi
-        else
-          err "Сайт не установлен"
-        fi
-        ;;
-      4)
         if site_installed; then
           if confirm_action "Удалить все изменения проекта?"; then
             remove_all_changes
