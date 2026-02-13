@@ -4,8 +4,8 @@ set -euo pipefail
 REPO_URL="${REPO_URL:-https://github.com/Feicap/remnawave-users}"
 APP_DIR="${APP_DIR:-/opt/remnawave-users}"
 ACTIVE_FILE="$APP_DIR/.active_color"
-TMP_DIR="$APP_DIR/.deploy-tmp"
 EXTERNAL_ENV_SOURCE="/opt/.env"
+COMPOSE_FILE="$APP_DIR/docker-compose.deploy.yml"
 
 BLUE_BACKEND_PORT=18080
 BLUE_FRONTEND_PORT=18081
@@ -19,14 +19,6 @@ require_sudo() {
   if ! sudo -n true 2>/dev/null; then
     log "sudo privileges are required"
     sudo -v
-  fi
-}
-
-check_external_env_at_start() {
-  if [ -f "$EXTERNAL_ENV_SOURCE" ]; then
-    log "Found external env file: $EXTERNAL_ENV_SOURCE"
-  else
-    log "External env file not found: $EXTERNAL_ENV_SOURCE"
   fi
 }
 
@@ -69,48 +61,26 @@ prepare_repo() {
   git pull --ff-only
 }
 
-choose_env_file() {
+prepare_env_files() {
   if [ -f "$EXTERNAL_ENV_SOURCE" ]; then
-    ENV_FILE="$APP_DIR/.env.prod"
-    cp "$EXTERNAL_ENV_SOURCE" "$ENV_FILE"
-    export ENV_FILE
-    log "Copied external env to $ENV_FILE"
-    return
+    cp "$EXTERNAL_ENV_SOURCE" "$APP_DIR/.env.prod"
+    log "Copied external env: $EXTERNAL_ENV_SOURCE -> $APP_DIR/.env.prod"
+  elif [ ! -f "$APP_DIR/.env.prod" ]; then
+    if [ -f "$APP_DIR/.env.prod.example" ]; then
+      cp "$APP_DIR/.env.prod.example" "$APP_DIR/.env.prod"
+      log "Created $APP_DIR/.env.prod from example"
+    else
+      err "Missing /opt/.env and $APP_DIR/.env.prod"
+      exit 1
+    fi
   fi
 
-  if [ -f "$APP_DIR/.env.prod" ]; then
-    ENV_FILE="$APP_DIR/.env.prod"
-  elif [ -f "$APP_DIR/.env.rpod" ]; then
-    ENV_FILE="$APP_DIR/.env.rpod"
-  elif [ -f "$APP_DIR/.env.prod.example" ]; then
-    cp "$APP_DIR/.env.prod.example" "$APP_DIR/.env.prod"
-    ENV_FILE="$APP_DIR/.env.prod"
-    log "Created $APP_DIR/.env.prod from example. Fill secrets before production deploy"
-  else
-    err "Missing .env.prod/.env.rpod/.env.prod.example"
-    exit 1
-  fi
-
-  export ENV_FILE
-  log "Using env file: $ENV_FILE"
-}
-
-choose_compose_base() {
-  if [ -f "$APP_DIR/docker-compose.prod.yml" ]; then
-    COMPOSE_BASE="$APP_DIR/docker-compose.prod.yml"
-  elif [ -f "$APP_DIR/docker-compose.yml" ]; then
-    COMPOSE_BASE="$APP_DIR/docker-compose.yml"
-  else
-    err "Missing docker-compose.prod.yml and docker-compose.yml"
-    exit 1
-  fi
-
-  export COMPOSE_BASE
-  log "Using compose base: $COMPOSE_BASE"
+  cp "$APP_DIR/.env.prod" "$APP_DIR/backend/.env"
+  log "Updated backend/.env from .env.prod"
 }
 
 read_domain_from_env() {
-  DOMAIN="$(grep -E '^NGINX_SERVER_NAME=' "$ENV_FILE" | tail -n1 | cut -d '=' -f2- || true)"
+  DOMAIN="$(grep -E '^NGINX_SERVER_NAME=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
   if [ -z "$DOMAIN" ]; then
     DOMAIN="jobrhyme.raspberryip.com"
   fi
@@ -143,40 +113,17 @@ get_active_color() {
   export ACTIVE_COLOR TARGET_COLOR TARGET_BACKEND_PORT TARGET_FRONTEND_PORT OLD_COLOR OLD_BACKEND_PORT OLD_FRONTEND_PORT
 }
 
-render_compose_for_color() {
+deploy_color() {
   local color="$1"
   local backend_port="$2"
   local frontend_port="$3"
-  local out_file="$APP_DIR/.docker-compose.${color}.rendered.yml"
 
-  sed \
-    -E \
-    -e "s|^([[:space:]]*-[[:space:]]*)\"?127\\.0\\.0\\.1:8080:8080\"?[[:space:]]*$|\\1\"127.0.0.1:${backend_port}:8080\"|g" \
-    -e "s|^([[:space:]]*-[[:space:]]*)\"?127\\.0\\.0\\.1:8081:80\"?[[:space:]]*$|\\1\"127.0.0.1:${frontend_port}:80\"|g" \
-    -e "s|^([[:space:]]*-[[:space:]]*)\"?8080:8080\"?[[:space:]]*$|\\1\"127.0.0.1:${backend_port}:8080\"|g" \
-    -e "s|^([[:space:]]*-[[:space:]]*)\"?80:80\"?[[:space:]]*$|\\1\"127.0.0.1:${frontend_port}:80\"|g" \
-    "$COMPOSE_BASE" > "$out_file"
-
-  printf '%s' "$out_file"
-}
-
-deploy_target_color() {
-  mkdir -p "$TMP_DIR"
-  TARGET_COMPOSE="$(render_compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT")"
-  export TARGET_COMPOSE
-
-  mkdir -p "$APP_DIR/backend"
-  cp "$ENV_FILE" "$APP_DIR/backend/.env"
-  log "Updated backend/.env from $ENV_FILE"
-  log "Rendered compose ports:"
-  grep -nE '^[[:space:]]*-[[:space:]]*"?([0-9]{1,5}\.)?[0-9.:]+' "$TARGET_COMPOSE" || true
-
-  log "Deploying ${TARGET_COLOR} (backend:${TARGET_BACKEND_PORT}, frontend:${TARGET_FRONTEND_PORT})"
-  docker compose \
-    --env-file "$ENV_FILE" \
+  log "Deploying $color (backend:$backend_port frontend:$frontend_port)"
+  BACKEND_HOST_PORT="$backend_port" FRONTEND_HOST_PORT="$frontend_port" docker compose \
+    --env-file "$APP_DIR/.env.prod" \
     --project-directory "$APP_DIR" \
-    -p "remnawave-${TARGET_COLOR}" \
-    -f "$TARGET_COMPOSE" \
+    -p "remnawave-$color" \
+    -f "$COMPOSE_FILE" \
     up -d --build --remove-orphans
 }
 
@@ -247,39 +194,40 @@ EOF
 }
 
 stop_old_color() {
-  local old_compose
-  old_compose="$(render_compose_for_color "$OLD_COLOR" "$OLD_BACKEND_PORT" "$OLD_FRONTEND_PORT")"
-
   log "Stopping old color: ${OLD_COLOR}"
-  docker compose \
-    --env-file "$ENV_FILE" \
+  BACKEND_HOST_PORT="$OLD_BACKEND_PORT" FRONTEND_HOST_PORT="$OLD_FRONTEND_PORT" docker compose \
+    --env-file "$APP_DIR/.env.prod" \
     --project-directory "$APP_DIR" \
     -p "remnawave-${OLD_COLOR}" \
-    -f "$old_compose" \
+    -f "$COMPOSE_FILE" \
     down || true
 }
 
 summary() {
   log "Done. Active color: ${TARGET_COLOR}"
-  docker compose \
-    --env-file "$ENV_FILE" \
+  BACKEND_HOST_PORT="$TARGET_BACKEND_PORT" FRONTEND_HOST_PORT="$TARGET_FRONTEND_PORT" docker compose \
+    --env-file "$APP_DIR/.env.prod" \
     --project-directory "$APP_DIR" \
     -p "remnawave-${TARGET_COLOR}" \
-    -f "$TARGET_COMPOSE" \
+    -f "$COMPOSE_FILE" \
     ps
 }
 
 main() {
   require_sudo
-  check_external_env_at_start
   install_base_packages
   install_docker_if_missing
   prepare_repo
-  choose_env_file
-  choose_compose_base
+
+  if [ ! -f "$COMPOSE_FILE" ]; then
+    err "Missing $COMPOSE_FILE"
+    exit 1
+  fi
+
+  prepare_env_files
   read_domain_from_env
   get_active_color
-  deploy_target_color
+  deploy_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT"
   health_check_target
   switch_nginx
   stop_old_color
