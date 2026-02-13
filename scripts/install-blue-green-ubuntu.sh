@@ -147,7 +147,7 @@ render_compose_for_color() {
   local color="$1"
   local backend_port="$2"
   local frontend_port="$3"
-  local out_file="$TMP_DIR/docker-compose.${color}.yml"
+  local out_file="$APP_DIR/.docker-compose.${color}.rendered.yml"
 
   sed \
     -E \

@@ -30,6 +30,7 @@ frontend/.vite/
 # Root env files
 .env
 .env.prod
+.docker-compose.*.rendered.yml
 
 # Production compose
 docker-compose.prod.yml
