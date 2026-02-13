@@ -179,6 +179,35 @@ export default function AdminCheck() {
     }
   }
 
+  async function deleteProof(proofId: number) {
+    if (!user) {
+      return
+    }
+
+    const confirmed = window.confirm('Удалить это фото без возможности восстановления?')
+    if (!confirmed) {
+      return
+    }
+
+    const authUser = user as TelegramUser
+    setIsUpdating(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/admin/payment-proofs/${proofId}/`, {
+        method: 'DELETE',
+        headers: buildAuthHeaders(authUser),
+      })
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({ error: 'Ошибка удаления' }))) as { error?: string }
+        throw new Error(payload.error || 'Ошибка удаления')
+      }
+      await Promise.all([loadUsers(), loadProofs()])
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Ошибка удаления')
+    } finally {
+      setIsUpdating(false)
+    }
+  }
   function handleBackToAdmin() {
     navigate('/admin')
   }
@@ -339,6 +368,15 @@ export default function AdminCheck() {
                           >
                             <span className="material-symbols-outlined text-base">schedule</span>
                             <span>Ожидание</span>
+                          </button>
+                          <button
+                            onClick={() => deleteProof(proof.id)}
+                            className="flex h-9 items-center gap-1 rounded-md bg-red-600/20 px-3 text-sm font-medium text-red-600 hover:bg-red-600/30 disabled:opacity-60"
+                            disabled={isUpdating}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-base">delete</span>
+                            <span>Удалить</span>
                           </button>
                         </div>
                       </div>

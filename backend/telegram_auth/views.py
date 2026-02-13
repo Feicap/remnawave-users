@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from time import time
 
-from django.http import FileResponse, HttpRequest, JsonResponse
+from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
 from django.db.models import Count, Max, Q
 from django.views.decorators.csrf import csrf_exempt
 
@@ -208,12 +208,24 @@ def admin_payment_proofs(request: HttpRequest) -> JsonResponse:
 
 
 @csrf_exempt
-def admin_update_payment_proof(request: HttpRequest, proof_id: int) -> JsonResponse:
+def admin_update_payment_proof(request: HttpRequest, proof_id: int) -> JsonResponse | HttpResponse:
     user_id, username = _extract_auth_user(request)
     if user_id is None:
         return JsonResponse({"error": "Unauthorized"}, status=401)
     if not _is_admin(user_id):
         return JsonResponse({"error": "Forbidden"}, status=403)
+
+    if request.method == "DELETE":
+        try:
+            proof = PaymentProof.objects.get(id=proof_id)
+        except PaymentProof.DoesNotExist:
+            return JsonResponse({"error": "Not found"}, status=404)
+
+        # Удаляем файл из хранилища и запись из базы.
+        proof.file.delete(save=False)
+        proof.delete()
+        return HttpResponse(status=204)
+
     if request.method != "PATCH":
         return JsonResponse({"error": "Invalid method"}, status=405)
 
