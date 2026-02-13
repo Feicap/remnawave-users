@@ -3,7 +3,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from time import time
 
-from .services import verify_telegram_auth, is_user_in_group
+from .services import has_telegram_config, verify_telegram_auth, is_user_in_group
 from .remnawave_client import get_subscription_url_sync
 
 # Телеграм-авторизация для доступа к подписке. 
@@ -17,6 +17,9 @@ def telegram_login(request):
         user = json.loads(request.body)
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    if not has_telegram_config():
+        return JsonResponse({"error": "Server Telegram config missing"}, status=500)
     
     # Верификация данных от Telegram. Проверяет корректность данных и срок их действия.
     if not verify_telegram_auth(user):
