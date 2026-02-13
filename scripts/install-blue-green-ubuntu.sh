@@ -150,12 +150,11 @@ render_compose_for_color() {
   local out_file="$TMP_DIR/docker-compose.${color}.yml"
 
   sed \
-    -e "s|127.0.0.1:8080:8080|127.0.0.1:${backend_port}:8080|g" \
-    -e "s|127.0.0.1:8081:80|127.0.0.1:${frontend_port}:80|g" \
-    -e "s|\"8080:8080\"|\"127.0.0.1:${backend_port}:8080\"|g" \
-    -e "s|\"80:80\"|\"127.0.0.1:${frontend_port}:80\"|g" \
-    -e "s|'8080:8080'|'127.0.0.1:${backend_port}:8080'|g" \
-    -e "s|'80:80'|'127.0.0.1:${frontend_port}:80'|g" \
+    -E \
+    -e "s|^([[:space:]]*-[[:space:]]*)\"?127\\.0\\.0\\.1:8080:8080\"?[[:space:]]*$|\\1\"127.0.0.1:${backend_port}:8080\"|g" \
+    -e "s|^([[:space:]]*-[[:space:]]*)\"?127\\.0\\.0\\.1:8081:80\"?[[:space:]]*$|\\1\"127.0.0.1:${frontend_port}:80\"|g" \
+    -e "s|^([[:space:]]*-[[:space:]]*)\"?8080:8080\"?[[:space:]]*$|\\1\"127.0.0.1:${backend_port}:8080\"|g" \
+    -e "s|^([[:space:]]*-[[:space:]]*)\"?80:80\"?[[:space:]]*$|\\1\"127.0.0.1:${frontend_port}:80\"|g" \
     "$COMPOSE_BASE" > "$out_file"
 
   printf '%s' "$out_file"
@@ -169,6 +168,8 @@ deploy_target_color() {
   mkdir -p "$APP_DIR/backend"
   cp "$ENV_FILE" "$APP_DIR/backend/.env"
   log "Updated backend/.env from $ENV_FILE"
+  log "Rendered compose ports:"
+  grep -nE '^[[:space:]]*-[[:space:]]*"?([0-9]{1,5}\.)?[0-9.:]+' "$TARGET_COMPOSE" || true
 
   log "Deploying ${TARGET_COLOR} (backend:${TARGET_BACKEND_PORT}, frontend:${TARGET_FRONTEND_PORT})"
   docker compose \
