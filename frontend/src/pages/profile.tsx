@@ -73,8 +73,8 @@ export default function Profile() {
   const canViewAdminPanel = isAdminUserId(user.id)
 
   return (
-    <div className="flex h-screen">
-      <aside className="w-64 flex-shrink-0 bg-white dark:bg-[#111722] p-4 flex flex-col justify-between border-r border-gray-200 dark:border-gray-800">
+    <div className="flex min-h-screen flex-col md:h-screen md:flex-row">
+      <aside className="w-full md:w-64 md:flex-shrink-0 bg-white dark:bg-[#111722] p-4 flex flex-col justify-between border-b md:border-b-0 md:border-r border-gray-200 dark:border-gray-800">
         <div className="flex flex-col gap-8">
           <div className="flex items-center gap-3 px-2">
             <span className="material-symbols-outlined text-primary text-3xl">shield</span>
@@ -137,7 +137,7 @@ export default function Profile() {
           </button>
         </div>
       </aside>
-      <main className="flex-1 p-6 lg:p-10">
+      <main className="flex-1 p-4 md:p-6 lg:p-10 overflow-y-auto">
         <div className="max-w-4xl mx-auto">
           <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
             <div className="flex flex-col gap-1">

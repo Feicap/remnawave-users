@@ -176,8 +176,8 @@ export default function ProfilePay() {
   }
 
   return (
-    <div className="flex h-screen">
-      <aside className="w-64 flex-shrink-0 bg-white dark:bg-[#111722] p-4 flex flex-col justify-between border-r border-gray-200 dark:border-gray-800">
+    <div className="flex min-h-screen flex-col md:h-screen md:flex-row">
+      <aside className="w-full md:w-64 md:flex-shrink-0 bg-white dark:bg-[#111722] p-4 flex flex-col justify-between border-b md:border-b-0 md:border-r border-gray-200 dark:border-gray-800">
         <div className="flex flex-col gap-8">
           <div className="flex items-center gap-3 px-2">
             <span className="material-symbols-outlined text-primary text-3xl">shield</span>
@@ -233,7 +233,7 @@ export default function ProfilePay() {
         </div>
       </aside>
 
-      <main className="flex-1 p-6 lg:p-10 overflow-y-auto">
+      <main className="flex-1 p-4 md:p-6 lg:p-10 overflow-y-auto">
         <div className="max-w-4xl mx-auto flex flex-col gap-6">
           <div className="flex flex-col gap-1">
             <p className="text-gray-900 dark:text-white text-4xl font-black leading-tight tracking-[-0.033em]">Проверка оплаты</p>
@@ -272,7 +272,7 @@ export default function ProfilePay() {
                   const status = statusIcon(item.status)
                   return (
                     <div key={item.id} className="flex items-start gap-3 justify-end">
-                      <div className="max-w-[75%] rounded-xl border border-gray-200 dark:border-[#324467] p-3 bg-gray-50 dark:bg-[#1a2539]">
+                      <div className="w-full md:max-w-[75%] rounded-xl border border-gray-200 dark:border-[#324467] p-3 bg-gray-50 dark:bg-[#1a2539]">
                         {!imageUrls[item.id] ? (
                           <div className="w-full h-48 rounded-lg mb-2 bg-gray-200/40 dark:bg-[#0f172a] animate-pulse" />
                         ) : (
