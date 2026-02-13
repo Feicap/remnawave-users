@@ -15,6 +15,19 @@ GREEN_FRONTEND_PORT=19081
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 err() { printf '[ERROR] %s\n' "$*" >&2; }
 
+compose_for_color() {
+  local color="$1"
+  local backend_port="$2"
+  local frontend_port="$3"
+  shift 3
+  BACKEND_HOST_PORT="$backend_port" FRONTEND_HOST_PORT="$frontend_port" docker compose \
+    --env-file "$APP_DIR/.env.prod" \
+    --project-directory "$APP_DIR" \
+    -p "remnawave-$color" \
+    -f "$COMPOSE_FILE" \
+    "$@"
+}
+
 require_sudo() {
   if ! sudo -n true 2>/dev/null; then
     log "sudo privileges are required"
@@ -119,21 +132,16 @@ deploy_color() {
   local frontend_port="$3"
 
   log "Deploying $color (backend:$backend_port frontend:$frontend_port)"
-  BACKEND_HOST_PORT="$backend_port" FRONTEND_HOST_PORT="$frontend_port" docker compose \
-    --env-file "$APP_DIR/.env.prod" \
-    --project-directory "$APP_DIR" \
-    -p "remnawave-$color" \
-    -f "$COMPOSE_FILE" \
-    up -d --build --remove-orphans
+  compose_for_color "$color" "$backend_port" "$frontend_port" up -d --build --remove-orphans
 }
 
 wait_http() {
   local url="$1"
-  local max_tries="${2:-40}"
+  local max_tries="${2:-90}"
   local i
 
   for i in $(seq 1 "$max_tries"); do
-    if curl -sS -m 3 -o /dev/null "$url"; then
+    if curl -fsS -m 3 -o /dev/null "$url" 2>/dev/null; then
       return 0
     fi
     sleep 2
@@ -142,16 +150,30 @@ wait_http() {
   return 1
 }
 
+print_target_debug() {
+  log "Target containers status (${TARGET_COLOR}):"
+  compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT" ps || true
+  log "Backend logs (${TARGET_COLOR}):"
+  compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT" logs backend --tail 120 || true
+  log "Frontend logs (${TARGET_COLOR}):"
+  compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT" logs frontend --tail 120 || true
+  log "Postgres logs (${TARGET_COLOR}):"
+  compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT" logs postgres --tail 80 || true
+}
+
 health_check_target() {
+  sleep 3
   log "Checking frontend on ${TARGET_FRONTEND_PORT}"
-  if ! wait_http "http://127.0.0.1:${TARGET_FRONTEND_PORT}"; then
+  if ! wait_http "http://127.0.0.1:${TARGET_FRONTEND_PORT}" 60; then
     err "Frontend did not start on port ${TARGET_FRONTEND_PORT}"
+    print_target_debug
     exit 1
   fi
 
   log "Checking backend on ${TARGET_BACKEND_PORT}"
-  if ! wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}"; then
+  if ! wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}" 90; then
     err "Backend did not start on port ${TARGET_BACKEND_PORT}"
+    print_target_debug
     exit 1
   fi
 }
@@ -195,22 +217,12 @@ EOF
 
 stop_old_color() {
   log "Stopping old color: ${OLD_COLOR}"
-  BACKEND_HOST_PORT="$OLD_BACKEND_PORT" FRONTEND_HOST_PORT="$OLD_FRONTEND_PORT" docker compose \
-    --env-file "$APP_DIR/.env.prod" \
-    --project-directory "$APP_DIR" \
-    -p "remnawave-${OLD_COLOR}" \
-    -f "$COMPOSE_FILE" \
-    down || true
+  compose_for_color "${OLD_COLOR}" "${OLD_BACKEND_PORT}" "${OLD_FRONTEND_PORT}" down || true
 }
 
 summary() {
   log "Done. Active color: ${TARGET_COLOR}"
-  BACKEND_HOST_PORT="$TARGET_BACKEND_PORT" FRONTEND_HOST_PORT="$TARGET_FRONTEND_PORT" docker compose \
-    --env-file "$APP_DIR/.env.prod" \
-    --project-directory "$APP_DIR" \
-    -p "remnawave-${TARGET_COLOR}" \
-    -f "$COMPOSE_FILE" \
-    ps
+  compose_for_color "${TARGET_COLOR}" "${TARGET_BACKEND_PORT}" "${TARGET_FRONTEND_PORT}" ps
 }
 
 main() {
