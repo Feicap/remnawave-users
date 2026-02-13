@@ -27,6 +27,7 @@ export default function ProfilePay() {
   const [isUploading, setIsUploading] = useState(false)
   const [error, setError] = useState('')
   const [imageUrls, setImageUrls] = useState<Record<number, string>>({})
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const imageBlobUrlsRef = useRef<string[]>([])
 
   const canViewAdminPanel = useMemo(() => (user ? isAdminUserId(user.id) : false), [user])
@@ -54,7 +55,7 @@ export default function ProfilePay() {
     loadMyProofs().catch((e: unknown) => setError(e instanceof Error ? e.message : 'Ошибка загрузки'))
     const intervalId = setInterval(() => {
       loadMyProofs().catch(() => {
-        // Ignore polling errors to avoid UI spam.
+        // ������ �������������� ���������� ����������, ����� �� �������� ���������.
       })
     }, 5000)
 
@@ -94,7 +95,7 @@ export default function ProfilePay() {
     }
 
     loadImages().catch(() => {
-      // Silent fail for missing images.
+      // ���� ���������� ������ �������� �����������.
     })
 
     return () => {
@@ -108,6 +109,16 @@ export default function ProfilePay() {
       imageBlobUrlsRef.current = []
     }
   }, [items, user])
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setPreviewUrl(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   if (!user) {
     return <div>Loading...</div>
@@ -265,11 +276,13 @@ export default function ProfilePay() {
                         {!imageUrls[item.id] ? (
                           <div className="w-full h-48 rounded-lg mb-2 bg-gray-200/40 dark:bg-[#0f172a] animate-pulse" />
                         ) : (
-                          <img
-                            alt={`proof-${item.id}`}
-                            className="w-full max-h-80 object-contain rounded-lg mb-2"
-                            src={imageUrls[item.id]}
-                          />
+                          <button className="w-full" onClick={() => setPreviewUrl(imageUrls[item.id])} type="button">
+                            <img
+                              alt={`proof-${item.id}`}
+                              className="w-full max-h-80 object-contain rounded-lg mb-2"
+                              src={imageUrls[item.id]}
+                            />
+                          </button>
                         )}
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-xs text-gray-500 dark:text-[#92a4c9]">
@@ -289,6 +302,26 @@ export default function ProfilePay() {
           </div>
         </div>
       </main>
+      {previewUrl ? (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"
+          onClick={() => setPreviewUrl(null)}
+        >
+          <button
+            className="absolute top-4 right-4 text-white bg-black/40 rounded-full h-10 w-10 flex items-center justify-center"
+            onClick={() => setPreviewUrl(null)}
+            type="button"
+          >
+            <span className="material-symbols-outlined">close</span>
+          </button>
+          <img
+            alt="preview"
+            className="max-h-[92vh] max-w-[96vw] object-contain rounded-lg"
+            onClick={(event) => event.stopPropagation()}
+            src={previewUrl}
+          />
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -28,6 +28,7 @@ export default function AdminCheck() {
   const [error, setError] = useState('')
   const [isUpdating, setIsUpdating] = useState(false)
   const [imageUrls, setImageUrls] = useState<Record<number, string>>({})
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const imageBlobUrlsRef = useRef<string[]>([])
 
   const isAdmin = useMemo(() => (user ? isAdminUserId(user.id) : false), [user])
@@ -75,7 +76,7 @@ export default function AdminCheck() {
 
     const interval = setInterval(() => {
       Promise.all([loadUsers(), loadProofs()]).catch(() => {
-        // Ignore polling errors silently.
+        // ������ �������������� ���������� ����������.
       })
     }, 5000)
     return () => clearInterval(interval)
@@ -121,7 +122,7 @@ export default function AdminCheck() {
     }
 
     loadImages().catch(() => {
-      // Ignore image loading errors.
+      // ������ �������� ����������� ����������.
     })
 
     return () => {
@@ -135,6 +136,16 @@ export default function AdminCheck() {
       imageBlobUrlsRef.current = []
     }
   }, [proofs, user])
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setPreviewUrl(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   if (!user || !isAdmin) {
     return <div>Loading...</div>
@@ -286,11 +297,13 @@ export default function AdminCheck() {
                         {!imageUrls[proof.id] ? (
                           <div className="w-full h-56 rounded-lg mb-3 bg-gray-200/40 dark:bg-[#0f172a] animate-pulse" />
                         ) : (
-                          <img
-                            alt={`proof-${proof.id}`}
-                            className="w-full max-h-96 object-contain rounded-lg mb-3"
-                            src={imageUrls[proof.id]}
-                          />
+                          <button className="w-full" onClick={() => setPreviewUrl(imageUrls[proof.id])} type="button">
+                            <img
+                              alt={`proof-${proof.id}`}
+                              className="w-full max-h-96 object-contain rounded-lg mb-3"
+                              src={imageUrls[proof.id]}
+                            />
+                          </button>
                         )}
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
@@ -337,6 +350,26 @@ export default function AdminCheck() {
           </section>
         </div>
       </main>
+      {previewUrl ? (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-4"
+          onClick={() => setPreviewUrl(null)}
+        >
+          <button
+            className="absolute top-4 right-4 text-white bg-black/40 rounded-full h-10 w-10 flex items-center justify-center"
+            onClick={() => setPreviewUrl(null)}
+            type="button"
+          >
+            <span className="material-symbols-outlined">close</span>
+          </button>
+          <img
+            alt="preview"
+            className="max-h-[92vh] max-w-[96vw] object-contain rounded-lg"
+            onClick={(event) => event.stopPropagation()}
+            src={previewUrl}
+          />
+        </div>
+      ) : null}
     </div>
   )
 }
