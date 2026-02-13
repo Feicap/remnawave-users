@@ -1,13 +1,17 @@
 services:
   postgres:
     image: postgres:16-alpine
+    profiles: ["shared-db"]
+    container_name: remnawave-shared-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: remnawave
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - shared_postgres_data:/var/lib/postgresql/data
+    networks:
+      - shared_db
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d remnawave"]
       interval: 10s
@@ -27,10 +31,10 @@ services:
       DJANGO_DB_SSL_REQUIRE: ${DJANGO_DB_SSL_REQUIRE:-False}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-jobrhyme.raspberryip.com}
       DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-https://jobrhyme.raspberryip.com}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/remnawave}
-    depends_on:
-      postgres:
-        condition: service_healthy
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@remnawave-shared-postgres:5432/remnawave}
+    networks:
+      - default
+      - shared_db
     ports:
       - "${BIND_IP:-127.0.0.1}:${BACKEND_HOST_PORT:-8080}:8080"
     command: >
@@ -53,4 +57,9 @@ services:
       - "${BIND_IP:-127.0.0.1}:${FRONTEND_HOST_PORT:-8081}:80"
 
 volumes:
-  postgres_data:
+  shared_postgres_data:
+
+networks:
+  shared_db:
+    external: true
+    name: remnawave-shared-db

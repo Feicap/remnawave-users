@@ -8,6 +8,9 @@ EXTERNAL_ENV_SOURCE="/opt/.env"
 COMPOSE_FILE="$APP_DIR/docker-compose.deploy.yml"
 CERTBOT_WEBROOT="/var/www/certbot"
 SCRIPT_RAW_URL="${SCRIPT_RAW_URL:-https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts/install-blue-green-ubuntu.sh}"
+SHARED_PROJECT="${SHARED_PROJECT:-remnawave-shared}"
+SHARED_NETWORK="${SHARED_NETWORK:-remnawave-shared-db}"
+SHARED_DB_CONTAINER="${SHARED_DB_CONTAINER:-remnawave-shared-postgres}"
 
 BLUE_BACKEND_PORT=18080
 BLUE_FRONTEND_PORT=18081
@@ -157,6 +160,16 @@ compose_for_color() {
     "$@"
 }
 
+compose_shared_db() {
+  docker compose \
+    --env-file "$APP_DIR/.env.prod" \
+    --project-directory "$APP_DIR" \
+    -p "$SHARED_PROJECT" \
+    -f "$COMPOSE_FILE" \
+    --profile shared-db \
+    "$@"
+}
+
 require_sudo() {
   if ! sudo -n true 2>/dev/null; then
     log "sudo privileges are required"
@@ -263,7 +276,7 @@ prepare_env_files() {
     log "Synchronized POSTGRES_PASSWORD with DATABASE_URL"
   fi
 
-  if [[ "$db_url" == *"@postgres:"* ]] && [[ "${ssl_require,,}" != "false" ]]; then
+  if [[ "$db_url" == *"@postgres:"* || "$db_url" == *"@remnawave-shared-postgres:"* ]] && [[ "${ssl_require,,}" != "false" ]]; then
     if grep -qE '^DJANGO_DB_SSL_REQUIRE=' "$APP_DIR/.env.prod"; then
       sed -i 's/^DJANGO_DB_SSL_REQUIRE=.*/DJANGO_DB_SSL_REQUIRE=False/' "$APP_DIR/.env.prod"
     else
@@ -308,6 +321,76 @@ prepare_env_files() {
 
   cp "$APP_DIR/.env.prod" "$APP_DIR/backend/.env"
   log "Updated backend/.env from .env.prod"
+}
+
+ensure_shared_network() {
+  if ! docker network inspect "$SHARED_NETWORK" >/dev/null 2>&1; then
+    log "Creating shared docker network: $SHARED_NETWORK"
+    docker network create "$SHARED_NETWORK" >/dev/null
+  fi
+}
+
+find_source_postgres_container() {
+  local candidates=()
+  if [ "$ACTIVE_COLOR" = "blue" ] || [ "$ACTIVE_COLOR" = "green" ]; then
+    candidates+=("remnawave-${ACTIVE_COLOR}-postgres-1")
+  fi
+  candidates+=("remnawave-blue-postgres-1" "remnawave-green-postgres-1")
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if docker ps --format '{{.Names}}' | grep -qx "$candidate"; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+shared_db_tables_count() {
+  docker exec "$SHARED_DB_CONTAINER" psql -U postgres -d remnawave -tAc \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';" | tr -d '[:space:]'
+}
+
+seed_shared_db_if_empty() {
+  local table_count
+  table_count="$(shared_db_tables_count || echo "")"
+  if [ -n "$table_count" ] && [ "$table_count" != "0" ]; then
+    log "Shared postgres already has data, seed is not required"
+    return
+  fi
+
+  local source_container
+  if ! source_container="$(find_source_postgres_container)"; then
+    log "Source color postgres not found, skipping initial DB seed"
+    return
+  fi
+
+  log "Seeding shared postgres from ${source_container}"
+  docker exec "$source_container" pg_dump -U postgres -d remnawave --clean --if-exists --no-owner --no-privileges \
+    | docker exec -i "$SHARED_DB_CONTAINER" psql -U postgres -d remnawave >/dev/null
+  log "Shared postgres seed completed"
+}
+
+ensure_shared_db() {
+  ensure_shared_network
+  log "Starting shared postgres"
+  compose_shared_db up -d postgres
+
+  local i
+  for i in $(seq 1 60); do
+    if docker exec "$SHARED_DB_CONTAINER" pg_isready -U postgres -d remnawave >/dev/null 2>&1; then
+      seed_shared_db_if_empty
+      return
+    fi
+    sleep 2
+  done
+
+  err "Shared postgres is not ready"
+  compose_shared_db ps || true
+  compose_shared_db logs postgres --tail 120 || true
+  exit 1
 }
 
 read_domain_from_env() {
@@ -416,8 +499,8 @@ print_target_debug() {
   compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT" logs backend --tail 120 || true
   log "Frontend logs (${TARGET_COLOR}):"
   compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT" logs frontend --tail 120 || true
-  log "Postgres logs (${TARGET_COLOR}):"
-  compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT" logs postgres --tail 80 || true
+  log "Shared postgres logs:"
+  compose_shared_db logs postgres --tail 80 || true
 }
 
 backend_logs_tail() {
@@ -432,9 +515,10 @@ maybe_recover_db_password_mismatch() {
   local logs
   logs="$(backend_logs_tail)"
   if echo "$logs" | grep -q 'password authentication failed for user "postgres"'; then
-    log "Detected postgres password mismatch for ${TARGET_COLOR}; recreating target stack volume and retrying once"
-    compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT" down -v || true
+    log "Detected postgres password mismatch; recreating shared postgres volume and retrying once"
+    compose_shared_db down -v || true
     RETRIED_DB_RESET=1
+    ensure_shared_db
     deploy_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT"
     return 0
   fi
@@ -630,6 +714,8 @@ remove_all_changes() {
   log "Stopping and removing blue/green stacks"
   compose_for_color "blue" "$BLUE_BACKEND_PORT" "$BLUE_FRONTEND_PORT" down -v || true
   compose_for_color "green" "$GREEN_BACKEND_PORT" "$GREEN_FRONTEND_PORT" down -v || true
+  compose_shared_db down -v || true
+  docker network rm "$SHARED_NETWORK" >/dev/null 2>&1 || true
 
   log "Removing nginx remnawave site"
   sudo rm -f /etc/nginx/sites-enabled/remnawave
@@ -658,6 +744,7 @@ run_deploy_flow() {
   prepare_env_files
   read_domain_from_env
   get_active_color
+  ensure_shared_db
   set_target_color "$requested_color"
   deploy_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT"
   health_check_target
@@ -692,6 +779,7 @@ switch_existing_flow() {
   prepare_env_files
   read_domain_from_env
   get_active_color
+  ensure_shared_db
   set_target_color "$requested_color"
 
   if [ "$ACTIVE_COLOR" = "$TARGET_COLOR" ]; then
