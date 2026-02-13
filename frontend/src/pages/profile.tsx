@@ -149,7 +149,6 @@ export default function Profile() {
 <p className="text-gray-600 dark:text-white text-base font-medium leading-normal">Истекает</p>
 <p className="text-gray-900 dark:text-white tracking-light text-2xl font-bold leading-tight">{expiresAtFormatted}</p>
 <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">Истекает через {daysLeft} дней.</p>
-<p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">Авто продление каждые 30 дней.</p>
 </div>
 </div>
 <div className="bg-white dark:bg-[#111722] rounded-xl border border-gray-200 dark:border-[#324467] p-6">
