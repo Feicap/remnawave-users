@@ -7,6 +7,7 @@ ACTIVE_FILE="$APP_DIR/.active_color"
 EXTERNAL_ENV_SOURCE="/opt/.env"
 COMPOSE_FILE="$APP_DIR/docker-compose.deploy.yml"
 CERTBOT_WEBROOT="/var/www/certbot"
+SCRIPT_RAW_URL="${SCRIPT_RAW_URL:-https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts/install-blue-green-ubuntu.sh}"
 
 BLUE_BACKEND_PORT=18080
 BLUE_FRONTEND_PORT=18081
@@ -45,6 +46,28 @@ menu_item() {
   local num="$1"
   local text="$2"
   menu_print "${COLOR_ORANGE}${num}${COLOR_RESET}. ${COLOR_YELLOW}${text}${COLOR_RESET}"
+}
+
+auto_refresh_script() {
+  if [ "${SCRIPT_AUTO_REFRESHED:-0}" = "1" ]; then
+    return
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    return
+  fi
+
+  local tmp_script
+  tmp_script="$(mktemp /tmp/remnawave-install.XXXXXX.sh)"
+  if curl -fsSL "${SCRIPT_RAW_URL}?ts=$(date +%s)" -o "$tmp_script"; then
+    chmod +x "$tmp_script"
+    SCRIPT_AUTO_REFRESHED=1 bash "$tmp_script" "$@"
+    local exit_code=$?
+    rm -f "$tmp_script"
+    exit "$exit_code"
+  fi
+
+  rm -f "$tmp_script"
 }
 
 menu_read() {
@@ -690,6 +713,7 @@ print_menu() {
 }
 
 main() {
+  auto_refresh_script "$@"
   setup_interactive_tty
   while true; do
     print_menu
