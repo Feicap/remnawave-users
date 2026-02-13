@@ -376,7 +376,13 @@ deploy_k8s_app_for_monitoring_if_enabled() {
   if [ -f "$APP_DIR/k8s/backend-secret.yaml" ]; then
     KUBECONFIG="$kubeconfig_path" kubectl apply -f "$APP_DIR/k8s/backend-secret.yaml"
   else
-    err "Missing $APP_DIR/k8s/backend-secret.yaml (k8s backend may fail without secrets)"
+    log "Missing $APP_DIR/k8s/backend-secret.yaml, generating Secret/backend-secret from .env.prod"
+    if ! KUBECONFIG="$kubeconfig_path" kubectl -n remnawave create secret generic backend-secret \
+      --from-env-file="$APP_DIR/.env.prod" \
+      --dry-run=client -o yaml | KUBECONFIG="$kubeconfig_path" kubectl apply -f -; then
+      err "Failed to generate backend-secret from .env.prod"
+      return 1
+    fi
   fi
 
   if [ -f "$APP_DIR/k8s/backend-configmap.prod.yaml" ]; then

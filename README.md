@@ -67,7 +67,7 @@ EOF
 - `k8s/ingress.prod.yaml`
 - `k8s/backend-configmap.prod.yaml`
 - `k8s/monitoring/values.prod.yaml`
-- `k8s/backend-secret.yaml`
+- `k8s/backend-secret.yaml` (опционально, если не хотите автогенерацию из `.env.prod`)
 
 ## Вариант 1: Docker Compose на Ubuntu VPS
 
@@ -82,7 +82,7 @@ curl -fsSL https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts
 При включённом мониторинге скрипт автоматически отключает встроенный `k3s` Traefik, чтобы он не перехватывал порты `80/443`.
 Отключение: `ENABLE_MONITORING=false` в `.env.prod`.
 Отключить автоустановку k3s: `ENABLE_K3S_AUTO_INSTALL=false` в `.env.prod`.
-Опционально развернуть app в k8s для app-метрик: `ENABLE_K8S_APP_DEPLOY=true` (понадобятся подготовленные k8s prod-манифесты/секреты).
+Опционально развернуть app в k8s для app-метрик: `ENABLE_K8S_APP_DEPLOY=true` (секрет `backend-secret` будет автосоздан из `.env.prod`, если `k8s/backend-secret.yaml` отсутствует).
 
 ### Установка Docker + Compose plugin
 ```bash
