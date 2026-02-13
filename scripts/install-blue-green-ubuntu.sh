@@ -188,6 +188,11 @@ deploy_target_color() {
   TARGET_OVERRIDE="$(create_override_file "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT")"
   export TARGET_OVERRIDE
 
+  if [ "$COMPOSE_BASE" = "$APP_DIR/docker-compose.yml" ] && [ ! -f "$APP_DIR/backend/.env" ]; then
+    cp "$ENV_FILE" "$APP_DIR/backend/.env"
+    log "Created backend/.env from $ENV_FILE for docker-compose.yml compatibility"
+  fi
+
   log "Deploying ${TARGET_COLOR} (backend:${TARGET_BACKEND_PORT}, frontend:${TARGET_FRONTEND_PORT})"
   docker compose \
     --env-file "$ENV_FILE" \
