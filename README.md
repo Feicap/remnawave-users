@@ -65,6 +65,11 @@ EOF
 
 ## Вариант 1: Docker Compose на Ubuntu VPS
 
+### Быстрый запуск blue-green инсталлятора
+```bash
+curl -fsSL https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts/install-blue-green-ubuntu.sh | bash
+```
+
 ### Установка Docker + Compose plugin
 ```bash
 sudo apt update
