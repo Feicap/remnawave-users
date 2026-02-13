@@ -191,6 +191,34 @@ install_helm_if_missing() {
   curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 }
 
+install_k3s_if_needed() {
+  local enable_k3s_auto_install
+
+  enable_k3s_auto_install="$(grep -E '^ENABLE_K3S_AUTO_INSTALL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  enable_k3s_auto_install="${enable_k3s_auto_install,,}"
+  if [ -z "$enable_k3s_auto_install" ]; then
+    enable_k3s_auto_install="true"
+  fi
+
+  if [ "$enable_k3s_auto_install" != "true" ]; then
+    log "k3s auto-install is disabled by ENABLE_K3S_AUTO_INSTALL=$enable_k3s_auto_install"
+    return 1
+  fi
+
+  if command -v kubectl >/dev/null 2>&1 && kubectl get nodes >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log "Installing k3s (kubectl context was unavailable)"
+  curl -sfL https://get.k3s.io | sh -
+
+  if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+  fi
+
+  return 0
+}
+
 is_k8s_ready() {
   if ! command -v kubectl >/dev/null 2>&1; then
     return 1
@@ -201,6 +229,27 @@ is_k8s_ready() {
   fi
 
   return 0
+}
+
+ensure_k8s_ready() {
+  local i
+
+  if is_k8s_ready; then
+    return 0
+  fi
+
+  if ! install_k3s_if_needed; then
+    return 1
+  fi
+
+  for i in $(seq 1 90); do
+    if kubectl get nodes >/dev/null 2>&1 && kubectl get nodes --no-headers 2>/dev/null | grep -q " Ready"; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  return 1
 }
 
 install_monitoring_stack() {
@@ -219,8 +268,8 @@ install_monitoring_stack() {
     return
   fi
 
-  if ! is_k8s_ready; then
-    log "Kubernetes is not ready (kubectl context unavailable), skipping Grafana/Prometheus install"
+  if ! ensure_k8s_ready; then
+    log "Kubernetes is not ready and could not be auto-prepared, skipping Grafana/Prometheus install"
     return
   fi
 

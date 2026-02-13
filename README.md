@@ -73,8 +73,10 @@ EOF
 curl -fsSL https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts/install-blue-green-ubuntu.sh | bash
 ```
 
-Инсталлятор автоматически пытается установить Grafana/Prometheus (kube-prometheus-stack), если доступен рабочий `kubectl`-контекст.
+Инсталлятор автоматически устанавливает Grafana/Prometheus (kube-prometheus-stack).
+Если `kubectl` недоступен, он пытается установить `k3s` и продолжает установку мониторинга.
 Отключение: `ENABLE_MONITORING=false` в `.env.prod`.
+Отключить автоустановку k3s: `ENABLE_K3S_AUTO_INSTALL=false` в `.env.prod`.
 
 ### Установка Docker + Compose plugin
 ```bash
