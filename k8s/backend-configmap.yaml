@@ -5,12 +5,11 @@ metadata:
   namespace: remnawave
 data:
   DJANGO_DEBUG: "False"
-  DJANGO_ALLOWED_HOSTS: "example.com,backend,localhost,127.0.0.1"
-  DJANGO_CSRF_TRUSTED_ORIGINS: "https://example.com"
+  DJANGO_ALLOWED_HOSTS: "your-domain,backend,localhost,127.0.0.1"
+  DJANGO_CSRF_TRUSTED_ORIGINS: "https://your-domain"
   DJANGO_SECURE_HSTS_SECONDS: "31536000"
   DJANGO_SECURE_SSL_REDIRECT: "True"
   DJANGO_SESSION_COOKIE_SECURE: "True"
   DJANGO_CSRF_COOKIE_SECURE: "True"
   DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS: "True"
   DJANGO_SECURE_HSTS_PRELOAD: "True"
-

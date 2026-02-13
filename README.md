@@ -1,45 +1,29 @@
-# remnawave-users
+﻿# remnawave-users
 
-Monorepo with:
-- `backend`: Django API for Telegram auth
-- `frontend`: React + Vite application
+Монорепозиторий проекта:
+- `backend` - Django API (Telegram auth)
+- `frontend` - React + Vite
+- `k8s` - манифесты Kubernetes и мониторинг (Prometheus/Grafana)
 
-## Requirements
-- Python 3.13+
-- Node.js 20+
-- npm 10+
-- Git 2.40+
+## Политика чувствительных данных
+- В `example` и базовых файлах используются только плейсхолдеры (`your-domain`, `your-password`, `your-token`).
+- Реальные значения хранятся только в локальных prod-файлах.
+- Локальные prod-файлы добавлены в `.gitignore` и не должны попадать в Git.
 
-## Quick start
+## Что заполнить перед развёртыванием
+Пользователь заполняет `.env` и prod-файлы вручную перед запуском.
 
-### 1. Backend
+### 1) Backend env (`backend/.env`)
 ```bash
-cd backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env
-python manage.py migrate
-python manage.py runserver 127.0.0.1:8080
+cp backend/.env.example backend/.env
+nano backend/.env
 ```
 
-### 2. Frontend
-```bash
-cd frontend
-npm ci
-copy .env.example .env
-npm run dev
-```
-
-Frontend dev server: `http://127.0.0.1:5173`
-
-## Environment variables
-
-### Backend (`backend/.env`)
+Минимально заполнить:
 - `DJANGO_SECRET_KEY`
-- `DJANGO_DEBUG`
-- `DJANGO_ALLOWED_HOSTS`
-- `DJANGO_CSRF_TRUSTED_ORIGINS`
+- `DJANGO_DEBUG=False`
+- `DJANGO_ALLOWED_HOSTS=your-domain`
+- `DJANGO_CSRF_TRUSTED_ORIGINS=https://your-domain`
 - `DATABASE_URL`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_GROUP_CHAT_ID`
@@ -47,113 +31,143 @@ Frontend dev server: `http://127.0.0.1:5173`
 - `REMNAWAVE_TOKEN`
 - `REMNAWAVE_COOKIE`
 
-### Frontend (`frontend/.env`)
-- `VITE_TELEGRAM_BOT_NAME`
-
-## Release checklist
-- [ ] Fill `.env` files with production values.
-- [ ] Set `DJANGO_DEBUG=False`.
-- [ ] Set `DJANGO_ALLOWED_HOSTS` for production domain.
-- [ ] Build frontend: `npm run build`.
-- [ ] Run backend checks: `python manage.py check --deploy`.
-- [ ] Commit and push to GitHub.
-
-## Docker (local)
-
-`docker-compose.yml` is for local/dev run (it can enable dev-friendly backend flags).
-For release use Kubernetes manifests and set strict production env values (`DJANGO_DEBUG=False`).
-
-`frontend` build now reads `frontend/.env` (`VITE_*`), and `build.args` can override these values.
-
-1. Prepare backend env:
+### 2) Frontend env (`frontend/.env`)
 ```bash
-cd backend
-copy .env.example .env
+cp frontend/.env.example frontend/.env
+nano frontend/.env
 ```
 
-2. Build and run:
+Указать:
+- `VITE_TELEGRAM_BOT_NAME=<имя_бота>`
+- `VITE_API_URL=<домен>/api/`
+/api/
+
+### 3) Docker prod env (`.env.prod`)
 ```bash
-cd ..
-docker compose up -d --build
+cat > .env.prod <<'EOF'
+DJANGO_DEBUG=False
+DJANGO_DB_SSL_REQUIRE=True
+DJANGO_ALLOWED_HOSTS=your-domain
+DJANGO_CSRF_TRUSTED_ORIGINS=https://your-domain
+DATABASE_URL=postgresql://postgres:your-db-password@postgres:5432/remnawave
+NGINX_SERVER_NAME=your-domain
+VITE_TELEGRAM_BOT_NAME=<имя_бота>
+VITE_API_URL=<домен>/api/
+EOF
 ```
 
-3. Open:
-- Frontend: `http://127.0.0.1`
-- Backend: `http://127.0.0.1:8080`
+## Локальные prod-файлы (игнорируются Git)
+- `backend/.env.prod`
+- `k8s/ingress.prod.yaml`
+- `k8s/backend-configmap.prod.yaml`
+- `k8s/monitoring/values.prod.yaml`
+- `k8s/backend-secret.yaml`
 
-## VPS from GitHub (runtime secrets)
+## Вариант 1: Docker Compose на Ubuntu VPS
 
-1. Clone repository on VPS:
+### Установка Docker + Compose plugin
 ```bash
-git clone <repo_url> /opt/remnawave
+sudo apt update
+sudo apt install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+### Клонирование и запуск
+```bash
+git clone https://github.com/Feicap/remnawave-users.git /opt/remnawave
 cd /opt/remnawave
-```
 
-2. Create runtime env files on VPS (do not commit them):
-```bash
-cp .env.prod.example .env.prod
 cp backend/.env.example backend/.env
-```
+cp frontend/.env.example frontend/.env
+# заполните backend/.env и frontend/.env
 
-3. Fill real secrets in `backend/.env` and set domain in `.env.prod`:
-- `NGINX_SERVER_NAME=jobrhyme.raspberryip.com`
-- `DJANGO_ALLOWED_HOSTS=jobrhyme.raspberryip.com`
-- `DJANGO_CSRF_TRUSTED_ORIGINS=https://jobrhyme.raspberryip.com`
-
-4. Start production compose:
-```bash
 docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
 ```
 
-5. On updates:
+### Проверка
 ```bash
-git pull
-docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f backend
+docker compose -f docker-compose.prod.yml logs -f frontend
 ```
 
-Notes:
-- Secrets stay only on VPS in `.env` files.
-- `frontend` nginx uses runtime variable `NGINX_SERVER_NAME`.
-- `docker-compose.prod.yml` binds to `127.0.0.1`; expose domain outside via host nginx reverse proxy.
+## Вариант 2: Kubernetes (k3s) на Ubuntu VPS
 
-## Kubernetes (base manifests)
-
-Manifest directory: `k8s/`
-
-Before deploy:
-- Build/push images and set them in:
-  - `k8s/backend-deployment.yaml`
-  - `k8s/frontend-deployment.yaml`
-- Copy secret template and fill real values:
-  - `k8s/backend-secret.example.yaml` -> `k8s/backend-secret.yaml`
-- Replace domain in:
-  - `k8s/ingress.yaml`
-
-Apply:
+### Установка k3s
 ```bash
-kubectl apply -f k8s/backend-secret.yaml
+curl -sfL https://get.k3s.io | sh -
+sudo kubectl get nodes
+```
+
+### Установка Helm
+```bash
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+helm version
+```
+
+### Установка ingress-nginx
+```bash
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+  -n ingress-nginx --create-namespace
+```
+
+### Установка cert-manager
+```bash
+helm repo add jetstack https://charts.jetstack.io
+helm repo update
+helm upgrade --install cert-manager jetstack/cert-manager \
+  -n cert-manager --create-namespace \
+  --set crds.enabled=true
+```
+
+### Подготовка манифестов
+1. Соберите/запушьте образы и обновите теги в:
+- `k8s/backend-deployment.yaml`
+- `k8s/frontend-deployment.yaml`
+
+2. Используйте локальные prod-файлы:
+```bash
+cp k8s/backend-secret.example.yaml k8s/backend-secret.yaml
+# при необходимости создайте/обновите:
+# k8s/ingress.prod.yaml
+# k8s/backend-configmap.prod.yaml
+# k8s/monitoring/values.prod.yaml
+```
+
+3. Применение:
+```bash
 kubectl apply -k k8s
+kubectl apply -f k8s/backend-secret.yaml
+kubectl apply -f k8s/backend-configmap.prod.yaml
+kubectl apply -f k8s/ingress.prod.yaml
 ```
 
-Optional autoscaling is already included in `k8s/hpa.yaml`.
-
-## Grafana / Prometheus
-
-Helm values are in `k8s/monitoring/values.yaml`.
-Install instructions: `k8s/monitoring/README.md`.
-
-## Important production notes
-
-- Do not store `.env` in GitHub (`backend/.env` and `frontend/.env` are ignored).
-- For Kubernetes, keep secrets in Secret manager/Sealed Secrets/Vault.
-- SQLite is not recommended in cluster mode; use PostgreSQL via `DATABASE_URL`.
-- Ensure `DJANGO_DEBUG=False` in production secrets/config.
-
-## GitHub setup
-After local git initialization, create empty repo on GitHub and run:
-
+## Grafana + Prometheus
 ```bash
-git remote add origin https://github.com/<username>/<repo>.git
-git branch -M main
-git push -u origin main
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring --create-namespace \
+  -f k8s/monitoring/values.prod.yaml
 ```
+
+Проверка:
+```bash
+kubectl get pods -n monitoring
+kubectl get ingress -n monitoring
+```
+
+## Безопасность
+- Не коммитьте реальные `.env` и секреты.
+- Для Kubernetes лучше использовать Sealed Secrets/Vault/внешний secret manager.
+- Для production используйте фиксированные image tags, а не `latest`.

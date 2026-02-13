@@ -9,10 +9,10 @@ spec:
   ingressClassName: nginx
   tls:
   - hosts:
-    - example.com
+    - your-domain
     secretName: remnawave-tls
   rules:
-  - host: example.com
+  - host: your-domain
     http:
       paths:
       - path: /api
@@ -29,4 +29,3 @@ spec:
             name: frontend
             port:
               number: 80
-

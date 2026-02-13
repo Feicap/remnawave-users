@@ -30,10 +30,15 @@ frontend/.vite/
 # Root env files
 .env
 .env.prod
-.env.prod.example
 
 # Production compose
 docker-compose.prod.yml
 
 # Kubernetes
 k8s/backend-secret.yaml
+k8s/ingress.prod.yaml
+k8s/backend-configmap.prod.yaml
+k8s/monitoring/values.prod.yaml
+
+# Local production env files
+backend/.env.prod
