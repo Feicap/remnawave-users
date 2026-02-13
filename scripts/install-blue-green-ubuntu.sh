@@ -308,6 +308,14 @@ prepare_repo() {
 }
 
 prepare_env_files() {
+  normalize_env_file() {
+    local file="$1"
+    local tmp_file
+    tmp_file="$(mktemp)"
+    awk '{ sub(/\r$/, ""); print }' "$file" > "$tmp_file"
+    mv "$tmp_file" "$file"
+  }
+
   set_env_kv() {
     local file="$1"
     local key="$2"
@@ -347,16 +355,16 @@ prepare_env_files() {
   fi
 
   # Normalize line endings if env was edited on Windows (CRLF -> LF).
-  sed -i 's/\r$//' "$APP_DIR/.env.prod"
+  normalize_env_file "$APP_DIR/.env.prod"
 
   local db_url
   local ssl_require
   local db_password
   local grafana_password
   local enable_https_raw
-  db_url="$(grep -E '^DATABASE_URL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
-  ssl_require="$(grep -E '^DJANGO_DB_SSL_REQUIRE=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
-  enable_https_raw="$(grep -E '^ENABLE_HTTPS=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  db_url="$(grep -E '^DATABASE_URL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  ssl_require="$(grep -E '^DJANGO_DB_SSL_REQUIRE=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  enable_https_raw="$(grep -E '^ENABLE_HTTPS=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
   enable_https_raw="${enable_https_raw,,}"
   db_password=""
 
@@ -369,7 +377,7 @@ prepare_env_files() {
     log "Synchronized POSTGRES_PASSWORD with DATABASE_URL"
   fi
 
-  grafana_password="$(grep -E '^GRAFANA_ADMIN_PASSWORD=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  grafana_password="$(grep -E '^GRAFANA_ADMIN_PASSWORD=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
   if [ -z "$grafana_password" ] && [ -n "$db_password" ]; then
     echo "GRAFANA_ADMIN_PASSWORD=$db_password" >> "$APP_DIR/.env.prod"
     log "Set GRAFANA_ADMIN_PASSWORD from POSTGRES_PASSWORD"
