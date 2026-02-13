@@ -731,7 +731,29 @@ server {
 }
 EOF
 
-  if [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ]; then
+  if [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ] && has_letsencrypt_cert_for_domain "$GRAFANA_DOMAIN"; then
+    sudo tee -a "$conf_path" >/dev/null <<EOF
+
+server {
+    listen 80;
+    server_name ${GRAFANA_DOMAIN};
+    client_max_body_size 15m;
+
+    location /.well-known/acme-challenge/ {
+        root ${CERTBOT_WEBROOT};
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:${GRAFANA_NODEPORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+  elif [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ]; then
     sudo tee -a "$conf_path" >/dev/null <<EOF
 
 server {
@@ -887,14 +909,21 @@ obtain_letsencrypt_cert_for_domain() {
     --agree-tos --non-interactive --keep-until-expiring
 }
 
+has_letsencrypt_cert_for_domain() {
+  local domain="$1"
+  [ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${domain}/privkey.pem" ]
+}
+
 switch_nginx() {
   write_nginx_http_config
   reload_nginx_with_site
   obtain_letsencrypt_cert_for_domain "$DOMAIN"
   if [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ]; then
-    obtain_letsencrypt_cert_for_domain "$GRAFANA_DOMAIN"
+    if ! obtain_letsencrypt_cert_for_domain "$GRAFANA_DOMAIN"; then
+      err "Failed to issue certificate for ${GRAFANA_DOMAIN}; keeping Grafana on HTTP until DNS/port 80 is fixed"
+    fi
   fi
-  if [ "$ENABLE_HTTPS" = "true" ] && [ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]; then
+  if [ "$ENABLE_HTTPS" = "true" ] && has_letsencrypt_cert_for_domain "$DOMAIN"; then
     write_nginx_https_config
     reload_nginx_with_site
   fi
