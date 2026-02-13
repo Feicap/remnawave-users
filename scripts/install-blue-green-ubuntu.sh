@@ -143,43 +143,28 @@ get_active_color() {
   export ACTIVE_COLOR TARGET_COLOR TARGET_BACKEND_PORT TARGET_FRONTEND_PORT OLD_COLOR OLD_BACKEND_PORT OLD_FRONTEND_PORT
 }
 
-create_override_file() {
+render_compose_for_color() {
   local color="$1"
   local backend_port="$2"
   local frontend_port="$3"
-  local out_file="$TMP_DIR/compose.override.$color.yml"
+  local out_file="$TMP_DIR/docker-compose.${color}.yml"
 
-  cat > "$out_file" <<EOF
-services:
-  backend:
-    env_file:
-      - ./.env.prod
-    environment:
-      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
-      DJANGO_DB_SSL_REQUIRE: ${DJANGO_DB_SSL_REQUIRE:-True}
-      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-jobrhyme.raspberryip.com}
-      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-https://jobrhyme.raspberryip.com}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:Super2025ReN@postgres:5432/remnawave}
-    ports:
-      - "127.0.0.1:${backend_port}:8080"
-
-  frontend:
-    build:
-      args:
-        VITE_TELEGRAM_BOT_NAME: ${VITE_TELEGRAM_BOT_NAME:-}
-    environment:
-      NGINX_SERVER_NAME: ${NGINX_SERVER_NAME:-jobrhyme.raspberryip.com}
-    ports:
-      - "127.0.0.1:${frontend_port}:80"
-EOF
+  sed \
+    -e "s|127.0.0.1:8080:8080|127.0.0.1:${backend_port}:8080|g" \
+    -e "s|127.0.0.1:8081:80|127.0.0.1:${frontend_port}:80|g" \
+    -e "s|\"8080:8080\"|\"127.0.0.1:${backend_port}:8080\"|g" \
+    -e "s|\"80:80\"|\"127.0.0.1:${frontend_port}:80\"|g" \
+    -e "s|'8080:8080'|'127.0.0.1:${backend_port}:8080'|g" \
+    -e "s|'80:80'|'127.0.0.1:${frontend_port}:80'|g" \
+    "$COMPOSE_BASE" > "$out_file"
 
   printf '%s' "$out_file"
 }
 
 deploy_target_color() {
   mkdir -p "$TMP_DIR"
-  TARGET_OVERRIDE="$(create_override_file "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT")"
-  export TARGET_OVERRIDE
+  TARGET_COMPOSE="$(render_compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT")"
+  export TARGET_COMPOSE
 
   mkdir -p "$APP_DIR/backend"
   cp "$ENV_FILE" "$APP_DIR/backend/.env"
@@ -189,8 +174,7 @@ deploy_target_color() {
   docker compose \
     --env-file "$ENV_FILE" \
     -p "remnawave-${TARGET_COLOR}" \
-    -f "$COMPOSE_BASE" \
-    -f "$TARGET_OVERRIDE" \
+    -f "$TARGET_COMPOSE" \
     up -d --build --remove-orphans
 }
 
@@ -261,16 +245,14 @@ EOF
 }
 
 stop_old_color() {
-  local old_override
-
-  old_override="$(create_override_file "$OLD_COLOR" "$OLD_BACKEND_PORT" "$OLD_FRONTEND_PORT")"
+  local old_compose
+  old_compose="$(render_compose_for_color "$OLD_COLOR" "$OLD_BACKEND_PORT" "$OLD_FRONTEND_PORT")"
 
   log "Stopping old color: ${OLD_COLOR}"
   docker compose \
     --env-file "$ENV_FILE" \
     -p "remnawave-${OLD_COLOR}" \
-    -f "$COMPOSE_BASE" \
-    -f "$old_override" \
+    -f "$old_compose" \
     down || true
 }
 
@@ -279,8 +261,7 @@ summary() {
   docker compose \
     --env-file "$ENV_FILE" \
     -p "remnawave-${TARGET_COLOR}" \
-    -f "$COMPOSE_BASE" \
-    -f "$TARGET_OVERRIDE" \
+    -f "$TARGET_COMPOSE" \
     ps
 }
 
