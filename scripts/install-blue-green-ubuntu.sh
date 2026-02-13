@@ -17,6 +17,19 @@ RETRIED_DB_RESET=0
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 err() { printf '[ERROR] %s\n' "$*" >&2; }
 
+INPUT_DEVICE="/dev/stdin"
+
+setup_input_device() {
+  if [ -t 0 ]; then
+    INPUT_DEVICE="/dev/stdin"
+  elif [ -r /dev/tty ]; then
+    INPUT_DEVICE="/dev/tty"
+  else
+    err "Interactive input is unavailable. Run script from a terminal."
+    exit 1
+  fi
+}
+
 compose_for_color() {
   local color="$1"
   local backend_port="$2"
@@ -555,10 +568,11 @@ print_menu() {
 }
 
 main() {
+  setup_input_device
   while true; do
     print_menu
     printf "> "
-    read -r choice
+    read -r choice < "$INPUT_DEVICE"
 
     case "$choice" in
       1)
@@ -581,7 +595,7 @@ main() {
       4)
         if site_installed; then
           printf "Подтвердите удаление (yes/no): "
-          read -r confirm
+          read -r confirm < "$INPUT_DEVICE"
           if [ "$confirm" = "yes" ]; then
             remove_all_changes
           else
