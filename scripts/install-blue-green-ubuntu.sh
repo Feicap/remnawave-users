@@ -11,6 +11,7 @@ BLUE_BACKEND_PORT=18080
 BLUE_FRONTEND_PORT=18081
 GREEN_BACKEND_PORT=19080
 GREEN_FRONTEND_PORT=19081
+RETRIED_DB_RESET=0
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 err() { printf '[ERROR] %s\n' "$*" >&2; }
@@ -221,6 +222,28 @@ print_target_debug() {
   compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT" logs postgres --tail 80 || true
 }
 
+backend_logs_tail() {
+  compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT" logs backend --tail 200 2>&1 || true
+}
+
+maybe_recover_db_password_mismatch() {
+  if [ "$RETRIED_DB_RESET" -eq 1 ]; then
+    return 1
+  fi
+
+  local logs
+  logs="$(backend_logs_tail)"
+  if echo "$logs" | grep -q 'password authentication failed for user "postgres"'; then
+    log "Detected postgres password mismatch for ${TARGET_COLOR}; recreating target stack volume and retrying once"
+    compose_for_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT" down -v || true
+    RETRIED_DB_RESET=1
+    deploy_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT"
+    return 0
+  fi
+
+  return 1
+}
+
 health_check_target() {
   sleep 3
   log "Checking frontend on ${TARGET_FRONTEND_PORT}"
@@ -232,6 +255,12 @@ health_check_target() {
 
   log "Checking backend on ${TARGET_BACKEND_PORT}"
   if ! wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}" "$DOMAIN" 90; then
+    if maybe_recover_db_password_mismatch; then
+      log "Retrying backend health check after DB reset"
+      if wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}" "$DOMAIN" 120; then
+        return 0
+      fi
+    fi
     err "Backend did not start on port ${TARGET_BACKEND_PORT}"
     print_target_debug
     exit 1
