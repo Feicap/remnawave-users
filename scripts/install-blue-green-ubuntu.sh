@@ -203,16 +203,41 @@ get_active_color() {
   if [ -f "$ACTIVE_FILE" ]; then
     ACTIVE_COLOR="$(cat "$ACTIVE_FILE")"
   else
-    ACTIVE_COLOR="blue"
+    ACTIVE_COLOR=""
   fi
+}
 
-  if [ "$ACTIVE_COLOR" = "blue" ]; then
+set_target_color() {
+  local requested="${1:-}"
+
+  if [ "$requested" = "blue" ]; then
+    TARGET_COLOR="blue"
+    TARGET_BACKEND_PORT=$BLUE_BACKEND_PORT
+    TARGET_FRONTEND_PORT=$BLUE_FRONTEND_PORT
+    OLD_COLOR="green"
+    OLD_BACKEND_PORT=$GREEN_BACKEND_PORT
+    OLD_FRONTEND_PORT=$GREEN_FRONTEND_PORT
+  elif [ "$requested" = "green" ]; then
     TARGET_COLOR="green"
     TARGET_BACKEND_PORT=$GREEN_BACKEND_PORT
     TARGET_FRONTEND_PORT=$GREEN_FRONTEND_PORT
     OLD_COLOR="blue"
     OLD_BACKEND_PORT=$BLUE_BACKEND_PORT
     OLD_FRONTEND_PORT=$BLUE_FRONTEND_PORT
+  elif [ "$ACTIVE_COLOR" = "blue" ]; then
+    TARGET_COLOR="green"
+    TARGET_BACKEND_PORT=$GREEN_BACKEND_PORT
+    TARGET_FRONTEND_PORT=$GREEN_FRONTEND_PORT
+    OLD_COLOR="blue"
+    OLD_BACKEND_PORT=$BLUE_BACKEND_PORT
+    OLD_FRONTEND_PORT=$BLUE_FRONTEND_PORT
+  elif [ "$ACTIVE_COLOR" = "green" ]; then
+    TARGET_COLOR="blue"
+    TARGET_BACKEND_PORT=$BLUE_BACKEND_PORT
+    TARGET_FRONTEND_PORT=$BLUE_FRONTEND_PORT
+    OLD_COLOR="green"
+    OLD_BACKEND_PORT=$GREEN_BACKEND_PORT
+    OLD_FRONTEND_PORT=$GREEN_FRONTEND_PORT
   else
     TARGET_COLOR="blue"
     TARGET_BACKEND_PORT=$BLUE_BACKEND_PORT
@@ -222,7 +247,7 @@ get_active_color() {
     OLD_FRONTEND_PORT=$GREEN_FRONTEND_PORT
   fi
 
-  export ACTIVE_COLOR TARGET_COLOR TARGET_BACKEND_PORT TARGET_FRONTEND_PORT OLD_COLOR OLD_BACKEND_PORT OLD_FRONTEND_PORT
+  export TARGET_COLOR TARGET_BACKEND_PORT TARGET_FRONTEND_PORT OLD_COLOR OLD_BACKEND_PORT OLD_FRONTEND_PORT
 }
 
 deploy_color() {
@@ -453,7 +478,33 @@ summary() {
   compose_for_color "${TARGET_COLOR}" "${TARGET_BACKEND_PORT}" "${TARGET_FRONTEND_PORT}" ps
 }
 
-main() {
+site_installed() {
+  [ -d "$APP_DIR/.git" ] && [ -f "$COMPOSE_FILE" ]
+}
+
+remove_all_changes() {
+  if ! site_installed; then
+    err "Project is not installed: nothing to remove"
+    return
+  fi
+
+  log "Stopping and removing blue/green stacks"
+  compose_for_color "blue" "$BLUE_BACKEND_PORT" "$BLUE_FRONTEND_PORT" down -v || true
+  compose_for_color "green" "$GREEN_BACKEND_PORT" "$GREEN_FRONTEND_PORT" down -v || true
+
+  log "Removing nginx remnawave site"
+  sudo rm -f /etc/nginx/sites-enabled/remnawave
+  sudo rm -f /etc/nginx/sites-available/remnawave
+  sudo nginx -t && sudo systemctl reload nginx || true
+
+  log "Removing project directory: $APP_DIR"
+  sudo rm -rf "$APP_DIR"
+
+  log "Cleanup complete"
+}
+
+run_deploy_flow() {
+  local requested_color="${1:-}"
   require_sudo
   install_base_packages
   install_docker_if_missing
@@ -468,11 +519,87 @@ main() {
   prepare_env_files
   read_domain_from_env
   get_active_color
+  set_target_color "$requested_color"
   deploy_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT"
   health_check_target
   switch_nginx
   stop_old_color
   summary
+}
+
+print_menu() {
+  local active=""
+  local blue_label="2. Переключение на green"
+  local green_label="3. Переключение на blue"
+
+  if [ -f "$ACTIVE_FILE" ]; then
+    active="$(cat "$ACTIVE_FILE" 2>/dev/null || true)"
+  fi
+
+  if [ "$active" = "green" ]; then
+    blue_label="2. Переключение на green (активен)"
+  fi
+  if [ "$active" = "blue" ]; then
+    green_label="3. Переключение на blue (активен)"
+  fi
+
+  echo
+  echo "Выберите действие:"
+  echo "1. Установить сайт"
+  if site_installed; then
+    echo "$blue_label"
+    echo "$green_label"
+    echo "4. Удаление всех изменений"
+  fi
+  echo "0. Выход из скрипта"
+}
+
+main() {
+  while true; do
+    print_menu
+    printf "> "
+    read -r choice
+
+    case "$choice" in
+      1)
+        run_deploy_flow ""
+        ;;
+      2)
+        if site_installed; then
+          run_deploy_flow "green"
+        else
+          err "Сайт не установлен"
+        fi
+        ;;
+      3)
+        if site_installed; then
+          run_deploy_flow "blue"
+        else
+          err "Сайт не установлен"
+        fi
+        ;;
+      4)
+        if site_installed; then
+          printf "Подтвердите удаление (yes/no): "
+          read -r confirm
+          if [ "$confirm" = "yes" ]; then
+            remove_all_changes
+          else
+            log "Удаление отменено"
+          fi
+        else
+          err "Сайт не установлен"
+        fi
+        ;;
+      0)
+        log "Выход"
+        exit 0
+        ;;
+      *)
+        err "Неизвестный пункт меню"
+        ;;
+    esac
+  done
 }
 
 main "$@"
