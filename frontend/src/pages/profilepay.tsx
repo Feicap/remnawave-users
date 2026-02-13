@@ -1,31 +1,47 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import type { TelegramUser } from '../types/telegram'
+import { isAdminUserId } from '../utils/admin'
 
-// Расширяем TelegramUser, добавляем token от backend
 interface AuthenticatedUser extends TelegramUser {
   token: string
 }
 
-export default function Profile_pay() {
+function getStoredUser(): AuthenticatedUser | null {
+  const stored = localStorage.getItem('tg_user')
+  if (!stored) {
+    return null
+  }
+
+  try {
+    return JSON.parse(stored) as AuthenticatedUser
+  } catch {
+    return null
+  }
+}
+
+export default function ProfilePay() {
   const navigate = useNavigate()
-  const [user, setUser] = useState<AuthenticatedUser | null>(null)
+  const [user] = useState<AuthenticatedUser | null>(() => getStoredUser())
 
   useEffect(() => {
-    const stored = localStorage.getItem('tg_user')
-    if (!stored) {
+    if (!user) {
       navigate('/auth')
-      return
     }
-    setUser(JSON.parse(stored))
-  }, [navigate])
+  }, [navigate, user])
 
   if (!user) {
     return <div>Loading...</div>
   }
 
+  const canViewAdminPanel = isAdminUserId(user.id)
+
   function handleProfileDashboardClick() {
     navigate('/profile')
+  }
+
+  function handleAdminPanelClick() {
+    navigate('/admin')
   }
 
   function handleAuthClick() {
@@ -43,7 +59,6 @@ export default function Profile_pay() {
             <span className="material-symbols-outlined text-primary text-3xl">shield</span>
             <span className="text-xl font-bold text-gray-900 dark:text-white">Мой VPS</span>
           </div>
-
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-3 px-3 py-2">
               <div
@@ -57,23 +72,19 @@ export default function Profile_pay() {
                 <h1 className="text-gray-900 dark:text-white text-base font-medium leading-normal">
                   {user.username || 'Пользователь'}
                 </h1>
-                <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">
-                  ID: {user.id}
-                </p>
+                <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">ID: {user.id}</p>
               </div>
             </div>
 
             <nav className="flex flex-col gap-2">
-              <a
+              <button
                 onClick={handleProfileDashboardClick}
-                className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50"
-                href="#"
+                className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"
+                type="button"
               >
                 <span className="material-symbols-outlined text-gray-500 dark:text-white">dashboard</span>
-                <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">
-                  Панель управления
-                </p>
-              </a>
+                <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Панель управления</p>
+              </button>
 
               <a
                 className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50"
@@ -83,10 +94,18 @@ export default function Profile_pay() {
                 <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Руководства</p>
               </a>
 
-              <a
-                className="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 dark:bg-[#232f48]"
-                href="#"
-              >
+              {canViewAdminPanel ? (
+                <button
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"
+                  onClick={handleAdminPanelClick}
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-gray-500 dark:text-white">admin_panel_settings</span>
+                  <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Админ панель</p>
+                </button>
+              ) : null}
+
+              <a className="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 dark:bg-[#232f48]" href="#">
                 <span className="material-symbols-outlined text-primary dark:text-white">payment</span>
                 <p className="text-primary dark:text-white text-sm font-medium leading-normal">Оплата</p>
               </a>
@@ -104,9 +123,7 @@ export default function Profile_pay() {
       <main className="flex-1 p-6 lg:p-10">
         <div className="max-w-xl mx-auto">
           <div className="flex flex-col gap-1 mb-8">
-            <p className="text-gray-900 dark:text-white text-4xl font-black leading-tight tracking-[-0.033em]">
-              Форма оплаты
-            </p>
+            <p className="text-gray-900 dark:text-white text-4xl font-black leading-tight tracking-[-0.033em]">Форма оплаты</p>
             <p className="text-gray-500 dark:text-[#92a4c9] text-base font-normal leading-normal">
               Загрузите скриншот, чтобы подтвердить ваш платеж.
             </p>
