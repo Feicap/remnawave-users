@@ -831,7 +831,7 @@ server {
 }
 EOF
 
-  if [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ]; then
+  if [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ] && has_letsencrypt_cert_for_domain "$GRAFANA_DOMAIN"; then
     local grafana_cert_dir="/etc/letsencrypt/live/${GRAFANA_DOMAIN}"
     sudo tee -a "$conf_path" >/dev/null <<EOF
 
@@ -862,6 +862,28 @@ server {
     ssl_session_tickets off;
 
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:${GRAFANA_NODEPORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+  elif [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ]; then
+    sudo tee -a "$conf_path" >/dev/null <<EOF
+
+server {
+    listen 80;
+    server_name ${GRAFANA_DOMAIN};
+    client_max_body_size 15m;
+
+    location /.well-known/acme-challenge/ {
+        root ${CERTBOT_WEBROOT};
+    }
 
     location / {
         proxy_pass http://127.0.0.1:${GRAFANA_NODEPORT};
