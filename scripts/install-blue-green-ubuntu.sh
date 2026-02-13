@@ -541,11 +541,15 @@ read_domain_from_env() {
   LETSENCRYPT_EMAIL="$(grep -E '^LETSENCRYPT_EMAIL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
   GRAFANA_DOMAIN="$(grep -E '^GRAFANA_DOMAIN=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
   GRAFANA_NODEPORT="$(grep -E '^GRAFANA_NODEPORT=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  GRAFANA_PUBLIC_PORT="$(grep -E '^GRAFANA_PUBLIC_PORT=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
   if [ -z "$GRAFANA_DOMAIN" ]; then
     GRAFANA_DOMAIN="grafana.${DOMAIN}"
   fi
   if [ -z "$GRAFANA_NODEPORT" ]; then
     GRAFANA_NODEPORT="32000"
+  fi
+  if [ -z "$GRAFANA_PUBLIC_PORT" ]; then
+    GRAFANA_PUBLIC_PORT="81"
   fi
   ENABLE_HTTPS="${ENABLE_HTTPS,,}"
   if [ -z "$ENABLE_HTTPS" ]; then
@@ -554,6 +558,7 @@ read_domain_from_env() {
   export DOMAIN
   export GRAFANA_DOMAIN
   export GRAFANA_NODEPORT
+  export GRAFANA_PUBLIC_PORT
   export ENABLE_HTTPS
   export LETSENCRYPT_EMAIL
 }
@@ -735,7 +740,7 @@ EOF
     sudo tee -a "$conf_path" >/dev/null <<EOF
 
 server {
-    listen 80;
+    listen ${GRAFANA_PUBLIC_PORT};
     server_name ${GRAFANA_DOMAIN};
     client_max_body_size 15m;
 
@@ -836,7 +841,7 @@ EOF
     sudo tee -a "$conf_path" >/dev/null <<EOF
 
 server {
-    listen 80;
+    listen ${GRAFANA_PUBLIC_PORT};
     server_name ${GRAFANA_DOMAIN};
     client_max_body_size 15m;
 
@@ -941,8 +946,12 @@ switch_nginx() {
   reload_nginx_with_site
   obtain_letsencrypt_cert_for_domain "$DOMAIN"
   if [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ]; then
-    if ! obtain_letsencrypt_cert_for_domain "$GRAFANA_DOMAIN"; then
-      err "Failed to issue certificate for ${GRAFANA_DOMAIN}; keeping Grafana on HTTP until DNS/port 80 is fixed"
+    if [ "$GRAFANA_PUBLIC_PORT" = "80" ]; then
+      if ! obtain_letsencrypt_cert_for_domain "$GRAFANA_DOMAIN"; then
+        err "Failed to issue certificate for ${GRAFANA_DOMAIN}; keeping Grafana on HTTP until DNS/port 80 is fixed"
+      fi
+    else
+      log "Skipping Grafana certificate request because GRAFANA_PUBLIC_PORT=${GRAFANA_PUBLIC_PORT} (HTTP-01 requires port 80)"
     fi
   fi
   if [ "$ENABLE_HTTPS" = "true" ] && has_letsencrypt_cert_for_domain "$DOMAIN"; then
