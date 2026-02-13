@@ -22,7 +22,7 @@ services:
       - ./backend/.env
     environment:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
-      DJANGO_DB_SSL_REQUIRE: ${DJANGO_DB_SSL_REQUIRE:-True}
+      DJANGO_DB_SSL_REQUIRE: ${DJANGO_DB_SSL_REQUIRE:-False}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-jobrhyme.raspberryip.com}
       DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-https://jobrhyme.raspberryip.com}
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/remnawave}

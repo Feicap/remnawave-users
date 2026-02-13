@@ -111,6 +111,20 @@ prepare_env_files() {
     fi
   fi
 
+  local db_url
+  local ssl_require
+  db_url="$(grep -E '^DATABASE_URL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  ssl_require="$(grep -E '^DJANGO_DB_SSL_REQUIRE=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+
+  if [[ "$db_url" == *"@postgres:"* ]] && [[ "${ssl_require,,}" != "false" ]]; then
+    if grep -qE '^DJANGO_DB_SSL_REQUIRE=' "$APP_DIR/.env.prod"; then
+      sed -i 's/^DJANGO_DB_SSL_REQUIRE=.*/DJANGO_DB_SSL_REQUIRE=False/' "$APP_DIR/.env.prod"
+    else
+      echo "DJANGO_DB_SSL_REQUIRE=False" >> "$APP_DIR/.env.prod"
+    fi
+    log "Set DJANGO_DB_SSL_REQUIRE=False for local docker postgres"
+  fi
+
   cp "$APP_DIR/.env.prod" "$APP_DIR/backend/.env"
   log "Updated backend/.env from .env.prod"
 }
