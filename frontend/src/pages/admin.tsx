@@ -8,7 +8,11 @@ interface AuthenticatedUser extends TelegramUser {
   token: string
 }
 
-const GRAFANA_URL = String(import.meta.env.VITE_GRAFANA_URL ?? '').trim()
+const rawGrafanaUrl = String(import.meta.env.VITE_GRAFANA_URL ?? '').trim()
+const fallbackGrafanaUrl =
+  typeof window !== 'undefined' ? `${window.location.origin}/dashboard/` : '/dashboard/'
+const GRAFANA_URL =
+  rawGrafanaUrl && !/grafanaz\.ftp\.sh/i.test(rawGrafanaUrl) ? rawGrafanaUrl : fallbackGrafanaUrl
 
 const ADMIN_ROWS = [
   { id: '@john_doe', plan: 'Премиум (месяц)', status: 'Активен', end: '2026-03-31', statusColor: 'text-green-500 bg-green-500/10' },
