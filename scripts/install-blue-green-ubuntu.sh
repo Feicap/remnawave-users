@@ -37,7 +37,7 @@ require_sudo() {
 
 install_base_packages() {
   sudo apt update
-  sudo apt install -y ca-certificates curl gnupg git nginx
+  sudo apt install -y ca-certificates curl gnupg git nginx ufw
 }
 
 install_docker_if_missing() {
@@ -58,6 +58,29 @@ install_docker_if_missing() {
   sudo apt update
   sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   sudo usermod -aG docker "$USER" || true
+}
+
+configure_ufw() {
+  if ! command -v ufw >/dev/null 2>&1; then
+    log "ufw is not installed, skipping firewall configuration"
+    return
+  fi
+
+  if ! sudo ufw status | grep -qi "Status: active"; then
+    log "ufw is not active, skipping firewall rule changes"
+    return
+  fi
+
+  log "Configuring ufw rules for web and blue/green internal ports"
+  sudo ufw allow OpenSSH >/dev/null || true
+  sudo ufw allow 80/tcp >/dev/null || true
+  sudo ufw allow 443/tcp >/dev/null || true
+
+  # These ports are for internal blue/green health checks and should not be reachable externally.
+  sudo ufw deny 18080/tcp >/dev/null || true
+  sudo ufw deny 18081/tcp >/dev/null || true
+  sudo ufw deny 19080/tcp >/dev/null || true
+  sudo ufw deny 19081/tcp >/dev/null || true
 }
 
 prepare_repo() {
@@ -229,6 +252,7 @@ main() {
   require_sudo
   install_base_packages
   install_docker_if_missing
+  configure_ufw
   prepare_repo
 
   if [ ! -f "$COMPOSE_FILE" ]; then
