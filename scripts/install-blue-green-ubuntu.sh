@@ -41,6 +41,12 @@ menu_print() {
   printf "%b\n" "$1" > "$MENU_OUTPUT"
 }
 
+menu_item() {
+  local num="$1"
+  local text="$2"
+  menu_print "${COLOR_ORANGE}${num}${COLOR_RESET}. ${COLOR_YELLOW}${text}${COLOR_RESET}"
+}
+
 menu_read() {
   local prompt="$1"
   local __resultvar="$2"
@@ -620,24 +626,29 @@ switch_existing_flow() {
 
 confirm_action() {
   local prompt="$1"
-  local answer
+  local answer=""
   while true; do
-    if ! menu_read "${prompt} (да/нет): " answer; then
+    menu_print "${COLOR_YELLOW}${prompt}${COLOR_RESET}"
+    menu_item "1" "Да"
+    menu_item "2" "Нет"
+    if ! menu_read "> " answer; then
       err "Не удалось прочитать подтверждение"
       return 1
     fi
-    case "${answer,,}" in
-      да|д|yes|y) return 0 ;;
-      нет|н|no|n) return 1 ;;
-      *) menu_print "${COLOR_ORANGE}Введите 'да' или 'нет'.${COLOR_RESET}" ;;
+    case "$answer" in
+      1) return 0 ;;
+      2) return 1 ;;
+      *) menu_print "${COLOR_YELLOW}Введите 1 или 2.${COLOR_RESET}" ;;
     esac
   done
 }
 
 print_menu() {
   local active=""
-  local blue_label="2. blue"
-  local green_label="3. green"
+  local blue_label="blue"
+  local green_label="green"
+  local blue_suffix=""
+  local green_suffix=""
   local install_hint=""
 
   if [ -f "$ACTIVE_FILE" ]; then
@@ -653,25 +664,29 @@ print_menu() {
   fi
 
   if [ "$active" = "green" ]; then
-    green_label="3. green (active)"
+    green_suffix=" (active)"
   fi
   if [ "$active" = "blue" ]; then
-    blue_label="2. blue (active)"
+    blue_suffix=" (active)"
   fi
 
   menu_print ""
   menu_print "${COLOR_YELLOW}Выберите действие:${COLOR_RESET}"
-  menu_print "${COLOR_ORANGE}1. Установка сайта${install_hint}${COLOR_RESET}"
-  if site_installed; then
-    if color_stack_exists "blue" "$BLUE_BACKEND_PORT" "$BLUE_FRONTEND_PORT" || [ "$active" = "blue" ]; then
-      menu_print "${COLOR_ORANGE}${blue_label}${COLOR_RESET}"
-    fi
-    if color_stack_exists "green" "$GREEN_BACKEND_PORT" "$GREEN_FRONTEND_PORT" || [ "$active" = "green" ]; then
-      menu_print "${COLOR_ORANGE}${green_label}${COLOR_RESET}"
-    fi
-    menu_print "${COLOR_ORANGE}4. Удаление всех изменений${COLOR_RESET}"
+  menu_item "1" "Установка сайта${install_hint}"
+
+  if site_installed && (color_stack_exists "blue" "$BLUE_BACKEND_PORT" "$BLUE_FRONTEND_PORT" || [ "$active" = "blue" ]); then
+    menu_item "2" "${blue_label}${blue_suffix}"
+  else
+    menu_item "2" "${blue_label} (недоступно)"
   fi
-  menu_print "${COLOR_ORANGE}0. Выход из скрипта${COLOR_RESET}"
+
+  if site_installed && (color_stack_exists "green" "$GREEN_BACKEND_PORT" "$GREEN_FRONTEND_PORT" || [ "$active" = "green" ]); then
+    menu_item "3" "${green_label}${green_suffix}"
+  else
+    menu_item "3" "${green_label} (недоступно)"
+  fi
+
+  menu_item "0" "Выход из скрипта"
 }
 
 main() {
@@ -722,17 +737,6 @@ main() {
             fi
           else
             err "green не развернут"
-          fi
-        else
-          err "Сайт не установлен"
-        fi
-        ;;
-      4)
-        if site_installed; then
-          if confirm_action "Удалить все изменения и окружение?"; then
-            remove_all_changes
-          else
-            log "Удаление отменено"
           fi
         else
           err "Сайт не установлен"
