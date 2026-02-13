@@ -143,3 +143,7 @@ SECURE_HSTS_PRELOAD = os.getenv("DJANGO_SECURE_HSTS_PRELOAD", "True" if not DEBU
     "on",
 )
 SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# Behind nginx reverse proxy, trust forwarded proto/host to avoid HTTPS redirect loops.
+USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
