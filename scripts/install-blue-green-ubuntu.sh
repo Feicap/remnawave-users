@@ -374,15 +374,16 @@ deploy_k8s_app_for_monitoring_if_enabled() {
   KUBECONFIG="$kubeconfig_path" kubectl apply -k "$APP_DIR/k8s"
 
   if [ -f "$APP_DIR/k8s/backend-secret.yaml" ]; then
+    log "Applying custom k8s/backend-secret.yaml"
     KUBECONFIG="$kubeconfig_path" kubectl apply -f "$APP_DIR/k8s/backend-secret.yaml"
-  else
-    log "Missing $APP_DIR/k8s/backend-secret.yaml, generating Secret/backend-secret from .env.prod"
-    if ! KUBECONFIG="$kubeconfig_path" kubectl -n remnawave create secret generic backend-secret \
-      --from-env-file="$APP_DIR/.env.prod" \
-      --dry-run=client -o yaml | KUBECONFIG="$kubeconfig_path" kubectl apply -f -; then
-      err "Failed to generate backend-secret from .env.prod"
-      return 1
-    fi
+  fi
+
+  log "Syncing k8s Secret/backend-secret from .env.prod"
+  if ! KUBECONFIG="$kubeconfig_path" kubectl -n remnawave create secret generic backend-secret \
+    --from-env-file="$APP_DIR/.env.prod" \
+    --dry-run=client -o yaml | KUBECONFIG="$kubeconfig_path" kubectl apply -f -; then
+    err "Failed to sync backend-secret from .env.prod"
+    return 1
   fi
 
   if [ -f "$APP_DIR/k8s/backend-configmap.prod.yaml" ]; then
@@ -521,6 +522,47 @@ prepare_env_files() {
     mv "$tmp_file" "$file"
   }
 
+  dedupe_env_file_keep_last() {
+    local file="$1"
+    local tmp_file
+    tmp_file="$(mktemp)"
+    awk '
+      {
+        line=$0
+        sub(/\r$/, "", line)
+      }
+      line ~ /^[[:space:]]*#/ || line ~ /^[[:space:]]*$/ {
+        next
+      }
+      {
+        pos=index(line, "=")
+        if (pos == 0) {
+          next
+        }
+        key=substr(line, 1, pos-1)
+        val=substr(line, pos+1)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+        if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
+          next
+        }
+        if (!(key in seen)) {
+          order[++n]=key
+        }
+        seen[key]=1
+        values[key]=val
+      }
+      END {
+        for (i=1; i<=n; i++) {
+          k=order[i]
+          if (seen[k]) {
+            print k "=" values[k]
+          }
+        }
+      }
+    ' "$file" > "$tmp_file"
+    mv "$tmp_file" "$file"
+  }
+
   set_env_kv() {
     local file="$1"
     local key="$2"
@@ -561,6 +603,8 @@ prepare_env_files() {
 
   # Normalize line endings if env was edited on Windows (CRLF -> LF).
   normalize_env_file "$APP_DIR/.env.prod"
+  # Remove duplicated keys (last value wins) to avoid kubectl --from-env-file failures.
+  dedupe_env_file_keep_last "$APP_DIR/.env.prod"
 
   local db_url
   local ssl_require
