@@ -17,17 +17,19 @@ RETRIED_DB_RESET=0
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 err() { printf '[ERROR] %s\n' "$*" >&2; }
 
-INPUT_DEVICE="/dev/stdin"
-
-setup_input_device() {
-  if [ -t 0 ]; then
-    INPUT_DEVICE="/dev/stdin"
-  elif [ -r /dev/tty ]; then
-    INPUT_DEVICE="/dev/tty"
-  else
-    err "Interactive input is unavailable. Run script from a terminal."
-    exit 1
+setup_interactive_tty() {
+  if [ -t 0 ] && [ -t 1 ]; then
+    return
   fi
+
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    # When script is started via "curl | bash", stdin is a pipe. Rebind to tty for menu mode.
+    exec </dev/tty >/dev/tty 2>&1
+    return
+  fi
+
+  err "Interactive input is unavailable. Run script from a terminal."
+  exit 1
 }
 
 compose_for_color() {
@@ -568,11 +570,14 @@ print_menu() {
 }
 
 main() {
-  setup_input_device
+  setup_interactive_tty
   while true; do
     print_menu
     printf "> "
-    read -r choice < "$INPUT_DEVICE"
+    if ! read -r choice; then
+      err "Не удалось прочитать выбор пункта меню"
+      continue
+    fi
 
     case "$choice" in
       1)
@@ -595,7 +600,10 @@ main() {
       4)
         if site_installed; then
           printf "Подтвердите удаление (yes/no): "
-          read -r confirm < "$INPUT_DEVICE"
+          if ! read -r confirm; then
+            err "Не удалось прочитать подтверждение"
+            continue
+          fi
           if [ "$confirm" = "yes" ]; then
             remove_all_changes
           else
