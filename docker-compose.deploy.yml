@@ -40,6 +40,8 @@ services:
       context: ./frontend
       args:
         VITE_TELEGRAM_BOT_NAME: ${VITE_TELEGRAM_BOT_NAME:-}
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_ADMIN: ${VITE_ADMIN:-}
     restart: unless-stopped
     environment:
       NGINX_SERVER_NAME: ${NGINX_SERVER_NAME:-jobrhyme.raspberryip.com}
