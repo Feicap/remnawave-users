@@ -18,6 +18,7 @@ set +a
 GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-${NGINX_SERVER_NAME:-}}"
 GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-${POSTGRES_PASSWORD:-}}"
 GRAFANA_NODEPORT="${GRAFANA_NODEPORT:-32000}"
+GRAFANA_SUBPATH="${GRAFANA_SUBPATH:-/dashboard}"
 PROMETHEUS_RETENTION="${PROMETHEUS_RETENTION:-15d}"
 PROMETHEUS_STORAGE_SIZE="${PROMETHEUS_STORAGE_SIZE:-20Gi}"
 GRAFANA_STORAGE_SIZE="${GRAFANA_STORAGE_SIZE:-5Gi}"
@@ -32,6 +33,14 @@ if [ -z "$GRAFANA_ADMIN_PASSWORD" ]; then
   exit 1
 fi
 
+if [[ "$GRAFANA_SUBPATH" != /* ]]; then
+  GRAFANA_SUBPATH="/$GRAFANA_SUBPATH"
+fi
+GRAFANA_SUBPATH="${GRAFANA_SUBPATH%/}"
+if [ -z "$GRAFANA_SUBPATH" ]; then
+  GRAFANA_SUBPATH="/dashboard"
+fi
+
 yaml_sq_escape() {
   printf "%s" "$1" | sed "s/'/''/g"
 }
@@ -40,6 +49,11 @@ mkdir -p "$(dirname "$OUT_FILE")"
 cat > "$OUT_FILE" <<EOF
 grafana:
   adminPassword: '$(yaml_sq_escape "$GRAFANA_ADMIN_PASSWORD")'
+  grafana.ini:
+    server:
+      domain: '$(yaml_sq_escape "$GRAFANA_DOMAIN")'
+      root_url: 'https://$(yaml_sq_escape "$GRAFANA_DOMAIN")$(yaml_sq_escape "$GRAFANA_SUBPATH")/'
+      serve_from_sub_path: true
   service:
     type: NodePort
     nodePort: $(yaml_sq_escape "$GRAFANA_NODEPORT")

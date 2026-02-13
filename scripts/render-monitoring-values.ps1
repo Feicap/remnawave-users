@@ -41,6 +41,7 @@ function Escape-YamlSingleQuoted {
 $grafanaDomain = Get-EnvValue -Map $envMap -Primary "GRAFANA_DOMAIN" -Fallback "NGINX_SERVER_NAME"
 $grafanaAdminPassword = Get-EnvValue -Map $envMap -Primary "GRAFANA_ADMIN_PASSWORD" -Fallback "POSTGRES_PASSWORD"
 $grafanaNodePort = Get-EnvValue -Map $envMap -Primary "GRAFANA_NODEPORT" -Default "32000"
+$grafanaSubpath = Get-EnvValue -Map $envMap -Primary "GRAFANA_SUBPATH" -Default "/dashboard"
 $prometheusRetention = Get-EnvValue -Map $envMap -Primary "PROMETHEUS_RETENTION" -Default "15d"
 $prometheusStorageSize = Get-EnvValue -Map $envMap -Primary "PROMETHEUS_STORAGE_SIZE" -Default "20Gi"
 $grafanaStorageSize = Get-EnvValue -Map $envMap -Primary "GRAFANA_STORAGE_SIZE" -Default "5Gi"
@@ -53,8 +54,15 @@ if ([string]::IsNullOrWhiteSpace($grafanaAdminPassword)) {
   Write-Error "GRAFANA_ADMIN_PASSWORD is empty (set it or POSTGRES_PASSWORD in $EnvFile)"
 }
 
+$grafanaSubpath = $grafanaSubpath.Trim()
+if (-not $grafanaSubpath.StartsWith("/")) { $grafanaSubpath = "/$grafanaSubpath" }
+$grafanaSubpath = $grafanaSubpath.TrimEnd("/")
+if ([string]::IsNullOrWhiteSpace($grafanaSubpath)) { $grafanaSubpath = "/dashboard" }
+
+$grafanaDomainEsc = Escape-YamlSingleQuoted $grafanaDomain
 $grafanaAdminPasswordEsc = Escape-YamlSingleQuoted $grafanaAdminPassword
 $grafanaNodePortEsc = Escape-YamlSingleQuoted $grafanaNodePort
+$grafanaSubpathEsc = Escape-YamlSingleQuoted $grafanaSubpath
 $prometheusRetentionEsc = Escape-YamlSingleQuoted $prometheusRetention
 $prometheusStorageSizeEsc = Escape-YamlSingleQuoted $prometheusStorageSize
 $grafanaStorageSizeEsc = Escape-YamlSingleQuoted $grafanaStorageSize
@@ -62,6 +70,11 @@ $grafanaStorageSizeEsc = Escape-YamlSingleQuoted $grafanaStorageSize
 $content = @"
 grafana:
   adminPassword: '$grafanaAdminPasswordEsc'
+  grafana.ini:
+    server:
+      domain: '$grafanaDomainEsc'
+      root_url: 'https://$grafanaDomainEsc$grafanaSubpathEsc/'
+      serve_from_sub_path: true
   service:
     type: NodePort
     nodePort: $grafanaNodePortEsc

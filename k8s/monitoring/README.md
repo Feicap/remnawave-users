@@ -46,7 +46,7 @@ In Prometheus UI (`Status -> Targets`), target `backend` should be `UP`.
 
 Default in this repo: Grafana ingress is disabled, service is exposed as `NodePort`.
 External access is expected via host nginx reverse proxy (configured by deploy script) on:
-- `https://<GRAFANA_DOMAIN>`
+- `https://<NGINX_SERVER_NAME><GRAFANA_SUBPATH>` (default: `https://<domain>/dashboard`)
 
 If ingress is not configured, use port-forward:
 

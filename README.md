@@ -53,12 +53,12 @@ DATABASE_URL=postgresql://postgres:your-db-password@postgres:5432/remnawave
 NGINX_SERVER_NAME=your-domain
 VITE_TELEGRAM_BOT_NAME=<имя_бота>
 VITE_API_URL=<домен>/api/
-VITE_GRAFANA_URL=https://grafanaz.ftp.sh
-GRAFANA_DOMAIN=grafana.your-domain
+VITE_GRAFANA_URL=https://your-domain/dashboard
+GRAFANA_DOMAIN=your-domain
 # optional, default = POSTGRES_PASSWORD from DATABASE_URL
 # GRAFANA_ADMIN_PASSWORD=your-grafana-password
 GRAFANA_NODEPORT=32000
-GRAFANA_PUBLIC_PORT=80
+GRAFANA_SUBPATH=/dashboard
 EOF
 ```
 
