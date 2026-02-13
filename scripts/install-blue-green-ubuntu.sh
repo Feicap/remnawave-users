@@ -14,6 +14,17 @@ BLUE_FRONTEND_PORT=18081
 GREEN_BACKEND_PORT=19080
 GREEN_FRONTEND_PORT=19081
 RETRIED_DB_RESET=0
+UPDATE_AVAILABLE=0
+
+CURL_REFRESH_ARGS=(
+  -fsSL
+  --connect-timeout 10
+  --max-time 60
+  --retry 3
+  -H "Cache-Control: no-cache, no-store, must-revalidate"
+  -H "Pragma: no-cache"
+  -H "Expires: 0"
+)
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 err() { printf '[ERROR] %s\n' "$*" >&2; }
@@ -59,15 +70,7 @@ auto_refresh_script() {
 
   local tmp_script
   tmp_script="$(mktemp /tmp/remnawave-install.XXXXXX.sh)"
-  if curl -fsSL \
-    --connect-timeout 10 \
-    --max-time 60 \
-    --retry 3 \
-    -H "Cache-Control: no-cache, no-store, must-revalidate" \
-    -H "Pragma: no-cache" \
-    -H "Expires: 0" \
-    "${SCRIPT_RAW_URL}?ts=$(date +%s)" \
-    -o "$tmp_script"; then
+  if curl "${CURL_REFRESH_ARGS[@]}" "${SCRIPT_RAW_URL}?ts=$(date +%s)" -o "$tmp_script"; then
     log "Loaded latest script version from GitHub"
     chmod +x "$tmp_script"
     SCRIPT_AUTO_REFRESHED=1 bash "$tmp_script" "$@"
@@ -78,6 +81,50 @@ auto_refresh_script() {
 
   err "Failed to fetch latest script version, continuing with current copy"
   rm -f "$tmp_script"
+}
+
+check_script_update() {
+  UPDATE_AVAILABLE=0
+
+  if ! command -v curl >/dev/null 2>&1; then
+    return
+  fi
+
+  if [ ! -r "${BASH_SOURCE[0]}" ]; then
+    return
+  fi
+
+  local tmp_script local_sum remote_sum
+  tmp_script="$(mktemp /tmp/remnawave-update-check.XXXXXX.sh)"
+  if ! curl "${CURL_REFRESH_ARGS[@]}" "${SCRIPT_RAW_URL}?ts=$(date +%s)" -o "$tmp_script"; then
+    rm -f "$tmp_script"
+    return
+  fi
+
+  local_sum="$(sha256sum "${BASH_SOURCE[0]}" | awk '{print $1}')"
+  remote_sum="$(sha256sum "$tmp_script" | awk '{print $1}')"
+  rm -f "$tmp_script"
+
+  if [ -n "$local_sum" ] && [ -n "$remote_sum" ] && [ "$local_sum" != "$remote_sum" ]; then
+    UPDATE_AVAILABLE=1
+  fi
+}
+
+update_script_now() {
+  local tmp_script
+  tmp_script="$(mktemp /tmp/remnawave-install-update.XXXXXX.sh)"
+  if ! curl "${CURL_REFRESH_ARGS[@]}" "${SCRIPT_RAW_URL}?ts=$(date +%s)" -o "$tmp_script"; then
+    err "Не удалось скачать обновление скрипта"
+    rm -f "$tmp_script"
+    return 1
+  fi
+
+  chmod +x "$tmp_script"
+  log "Запуск обновлённой версии скрипта"
+  SCRIPT_AUTO_REFRESHED=1 bash "$tmp_script"
+  local exit_code=$?
+  rm -f "$tmp_script"
+  exit "$exit_code"
 }
 
 menu_read() {
@@ -703,6 +750,9 @@ print_menu() {
   else
     menu_print "${COLOR_YELLOW}Сайт ещё не развёрнут${COLOR_RESET}"
   fi
+  if [ "$UPDATE_AVAILABLE" -eq 1 ]; then
+    menu_print "${COLOR_YELLOW}Есть обновление!${COLOR_RESET}"
+  fi
   menu_print "${COLOR_YELLOW}Выберите действие:${COLOR_RESET}"
   menu_item "1" "Установка сайта${install_hint}"
 
@@ -713,6 +763,10 @@ print_menu() {
   fi
   menu_item "2" "${rollback_label}"
   menu_item "3" "Удалить изменения"
+  if [ "$UPDATE_AVAILABLE" -eq 1 ]; then
+    menu_item "4" "Обновить скрипт"
+  fi
+  menu_print ""
   menu_item "0" "Выход из скрипта"
 }
 
@@ -720,6 +774,7 @@ main() {
   auto_refresh_script "$@"
   setup_interactive_tty
   while true; do
+    check_script_update
     print_menu
     if ! menu_read "> " choice; then
       err "Не удалось прочитать выбор пункта меню"
@@ -779,6 +834,17 @@ main() {
         if confirm_action "Выйти из скрипта?"; then
           log "Выход"
           exit 0
+        fi
+        ;;
+      4)
+        if [ "$UPDATE_AVAILABLE" -eq 1 ]; then
+          if confirm_action "Обновить скрипт сейчас?"; then
+            update_script_now
+          else
+            log "Операция отменена"
+          fi
+        else
+          err "Обновление не найдено"
         fi
         ;;
       *)
