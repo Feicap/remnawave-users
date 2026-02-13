@@ -276,6 +276,18 @@ prepare_env_files() {
     log "Synchronized POSTGRES_PASSWORD with DATABASE_URL"
   fi
 
+  if [[ "$db_url" == *"@postgres:"* || "$db_url" == *"@remnawave-blue-postgres-1:"* || "$db_url" == *"@remnawave-green-postgres-1:"* ]]; then
+    local db_url_shared
+    db_url_shared="$(echo "$db_url" | sed -E 's|@(postgres|remnawave-blue-postgres-1|remnawave-green-postgres-1):|@remnawave-shared-postgres:|')"
+    if grep -qE '^DATABASE_URL=' "$APP_DIR/.env.prod"; then
+      sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$db_url_shared|" "$APP_DIR/.env.prod"
+    else
+      echo "DATABASE_URL=$db_url_shared" >> "$APP_DIR/.env.prod"
+    fi
+    db_url="$db_url_shared"
+    log "Updated DATABASE_URL to shared postgres host"
+  fi
+
   if [[ "$db_url" == *"@postgres:"* || "$db_url" == *"@remnawave-shared-postgres:"* ]] && [[ "${ssl_require,,}" != "false" ]]; then
     if grep -qE '^DJANGO_DB_SSL_REQUIRE=' "$APP_DIR/.env.prod"; then
       sed -i 's/^DJANGO_DB_SSL_REQUIRE=.*/DJANGO_DB_SSL_REQUIRE=False/' "$APP_DIR/.env.prod"
