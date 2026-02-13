@@ -59,6 +59,14 @@ GRAFANA_DOMAIN=your-domain
 # GRAFANA_ADMIN_PASSWORD=your-grafana-password
 GRAFANA_NODEPORT=32000
 GRAFANA_SUBPATH=/dashboard
+ENABLE_K8S_APP_DEPLOY=true
+K8S_BACKEND_IMAGE=ghcr.io/your-org/remnawave-backend:latest
+K8S_FRONTEND_IMAGE=ghcr.io/your-org/remnawave-frontend:latest
+# optional for private registry
+# K8S_IMAGE_PULL_SECRET=ghcr-creds
+# K8S_IMAGE_REGISTRY=ghcr.io
+# K8S_IMAGE_PULL_SECRET_USERNAME=your-ghcr-user
+# K8S_IMAGE_PULL_SECRET_PASSWORD=your-ghcr-token
 EOF
 ```
 
@@ -82,7 +90,10 @@ curl -fsSL https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts
 При включённом мониторинге скрипт автоматически отключает встроенный `k3s` Traefik, чтобы он не перехватывал порты `80/443`.
 Отключение: `ENABLE_MONITORING=false` в `.env.prod`.
 Отключить автоустановку k3s: `ENABLE_K3S_AUTO_INSTALL=false` в `.env.prod`.
-Опционально развернуть app в k8s для app-метрик: `ENABLE_K8S_APP_DEPLOY=true` (секрет `backend-secret` будет автосоздан из `.env.prod`, если `k8s/backend-secret.yaml` отсутствует).
+Опционально развернуть app в k8s для app-метрик: `ENABLE_K8S_APP_DEPLOY=true`.
+Для этого в `.env.prod` обязательно задайте `K8S_BACKEND_IMAGE` и `K8S_FRONTEND_IMAGE`.
+Если registry приватный, задайте `K8S_IMAGE_PULL_SECRET` и креды `K8S_IMAGE_PULL_SECRET_USERNAME`/`K8S_IMAGE_PULL_SECRET_PASSWORD`.
+Скрипт сам проставит образы в `deploy/backend` и `deploy/frontend`, а также синхронизирует `backend-secret` из `.env.prod`.
 
 ### Установка Docker + Compose plugin
 ```bash
@@ -150,9 +161,9 @@ helm upgrade --install cert-manager jetstack/cert-manager \
 ```
 
 ### Подготовка манифестов
-1. Соберите/запушьте образы и обновите теги в:
-- `k8s/backend-deployment.yaml`
-- `k8s/frontend-deployment.yaml`
+1. Соберите/запушьте образы в registry и задайте в `.env.prod`:
+- `K8S_BACKEND_IMAGE`
+- `K8S_FRONTEND_IMAGE`
 
 2. Используйте локальные prod-файлы:
 ```bash
@@ -166,7 +177,8 @@ cp k8s/backend-secret.example.yaml k8s/backend-secret.yaml
 3. Применение:
 ```bash
 kubectl apply -k k8s
-kubectl apply -f k8s/backend-secret.yaml
+kubectl -n remnawave set image deploy/backend backend=ghcr.io/your-org/remnawave-backend:latest
+kubectl -n remnawave set image deploy/frontend frontend=ghcr.io/your-org/remnawave-frontend:latest
 kubectl apply -f k8s/backend-configmap.prod.yaml
 kubectl apply -f k8s/ingress.prod.yaml
 ```

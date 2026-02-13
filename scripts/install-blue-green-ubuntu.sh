@@ -424,6 +424,12 @@ EOF
 
 deploy_k8s_app_for_monitoring_if_enabled() {
   local kubeconfig_path
+  local k8s_backend_image
+  local k8s_frontend_image
+  local k8s_pull_secret
+  local k8s_registry
+  local k8s_pull_user
+  local k8s_pull_password
   kubeconfig_path="${KUBECONFIG:-$K3S_KUBECONFIG}"
 
   if ! is_monitoring_enabled; then
@@ -440,8 +446,46 @@ deploy_k8s_app_for_monitoring_if_enabled() {
     return 1
   fi
 
+  k8s_backend_image="$(grep -E '^K8S_BACKEND_IMAGE=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  k8s_frontend_image="$(grep -E '^K8S_FRONTEND_IMAGE=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  k8s_pull_secret="$(grep -E '^K8S_IMAGE_PULL_SECRET=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  k8s_registry="$(grep -E '^K8S_IMAGE_REGISTRY=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  k8s_pull_user="$(grep -E '^K8S_IMAGE_PULL_SECRET_USERNAME=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  k8s_pull_password="$(grep -E '^K8S_IMAGE_PULL_SECRET_PASSWORD=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+
+  if [ -z "$k8s_backend_image" ] || [ -z "$k8s_frontend_image" ]; then
+    err "K8S_BACKEND_IMAGE and K8S_FRONTEND_IMAGE must be set in .env.prod when ENABLE_K8S_APP_DEPLOY=true"
+    return 1
+  fi
+
+  if [ -z "$k8s_registry" ]; then
+    k8s_registry="ghcr.io"
+  fi
+
   log "Deploying Kubernetes app manifests (ENABLE_K8S_APP_DEPLOY=true)"
   KUBECONFIG="$kubeconfig_path" kubectl apply -k "$APP_DIR/k8s"
+
+  log "Applying k8s app images from .env.prod"
+  KUBECONFIG="$kubeconfig_path" kubectl -n remnawave set image deploy/backend backend="$k8s_backend_image"
+  KUBECONFIG="$kubeconfig_path" kubectl -n remnawave set image deploy/frontend frontend="$k8s_frontend_image"
+
+  if [ -n "$k8s_pull_secret" ]; then
+    if [ -n "$k8s_pull_user" ] && [ -n "$k8s_pull_password" ]; then
+      log "Syncing imagePullSecret $k8s_pull_secret from .env.prod credentials"
+      KUBECONFIG="$kubeconfig_path" kubectl -n remnawave create secret docker-registry "$k8s_pull_secret" \
+        --docker-server="$k8s_registry" \
+        --docker-username="$k8s_pull_user" \
+        --docker-password="$k8s_pull_password" \
+        --dry-run=client -o yaml | KUBECONFIG="$kubeconfig_path" kubectl apply -f -
+    else
+      log "Using existing imagePullSecret $k8s_pull_secret (credentials not provided in .env.prod)"
+    fi
+
+    KUBECONFIG="$kubeconfig_path" kubectl -n remnawave patch deploy backend --type merge \
+      -p "{\"spec\":{\"template\":{\"spec\":{\"imagePullSecrets\":[{\"name\":\"$k8s_pull_secret\"}]}}}}"
+    KUBECONFIG="$kubeconfig_path" kubectl -n remnawave patch deploy frontend --type merge \
+      -p "{\"spec\":{\"template\":{\"spec\":{\"imagePullSecrets\":[{\"name\":\"$k8s_pull_secret\"}]}}}}"
+  fi
 
   if [ -f "$APP_DIR/k8s/backend-secret.yaml" ]; then
     log "Applying custom k8s/backend-secret.yaml"
