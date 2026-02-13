@@ -948,6 +948,7 @@ print_menu() {
 }
 
 main() {
+  auto_refresh_script "$@"
   setup_interactive_tty
   while true; do
     check_script_update
