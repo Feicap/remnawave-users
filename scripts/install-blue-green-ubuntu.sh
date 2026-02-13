@@ -308,6 +308,31 @@ prepare_repo() {
 }
 
 prepare_env_files() {
+  set_env_kv() {
+    local file="$1"
+    local key="$2"
+    local value="$3"
+    local tmp_file
+    tmp_file="$(mktemp)"
+    awk -v k="$key" -v v="$value" '
+      BEGIN { updated=0 }
+      index($0, k "=") == 1 {
+        if (!updated) {
+          print k "=" v
+          updated=1
+        }
+        next
+      }
+      { print }
+      END {
+        if (!updated) {
+          print k "=" v
+        }
+      }
+    ' "$file" > "$tmp_file"
+    mv "$tmp_file" "$file"
+  }
+
   if [ -f "$EXTERNAL_ENV_SOURCE" ]; then
     cp "$EXTERNAL_ENV_SOURCE" "$APP_DIR/.env.prod"
     log "Copied external env: $EXTERNAL_ENV_SOURCE -> $APP_DIR/.env.prod"
@@ -340,11 +365,7 @@ prepare_env_files() {
   fi
 
   if [ -n "$db_password" ]; then
-    if grep -qE '^POSTGRES_PASSWORD=' "$APP_DIR/.env.prod"; then
-      sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$db_password|" "$APP_DIR/.env.prod"
-    else
-      echo "POSTGRES_PASSWORD=$db_password" >> "$APP_DIR/.env.prod"
-    fi
+    set_env_kv "$APP_DIR/.env.prod" "POSTGRES_PASSWORD" "$db_password"
     log "Synchronized POSTGRES_PASSWORD with DATABASE_URL"
   fi
 
@@ -357,56 +378,24 @@ prepare_env_files() {
   if [[ "$db_url" == *"@postgres:"* || "$db_url" == *"@remnawave-blue-postgres-1:"* || "$db_url" == *"@remnawave-green-postgres-1:"* ]]; then
     local db_url_shared
     db_url_shared="$(echo "$db_url" | sed -E 's|@(postgres|remnawave-blue-postgres-1|remnawave-green-postgres-1):|@remnawave-shared-postgres:|')"
-    if grep -qE '^DATABASE_URL=' "$APP_DIR/.env.prod"; then
-      sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$db_url_shared|" "$APP_DIR/.env.prod"
-    else
-      echo "DATABASE_URL=$db_url_shared" >> "$APP_DIR/.env.prod"
-    fi
+    set_env_kv "$APP_DIR/.env.prod" "DATABASE_URL" "$db_url_shared"
     db_url="$db_url_shared"
     log "Updated DATABASE_URL to shared postgres host"
   fi
 
   if [[ "$db_url" == *"@postgres:"* || "$db_url" == *"@remnawave-shared-postgres:"* ]] && [[ "${ssl_require,,}" != "false" ]]; then
-    if grep -qE '^DJANGO_DB_SSL_REQUIRE=' "$APP_DIR/.env.prod"; then
-      sed -i 's/^DJANGO_DB_SSL_REQUIRE=.*/DJANGO_DB_SSL_REQUIRE=False/' "$APP_DIR/.env.prod"
-    else
-      echo "DJANGO_DB_SSL_REQUIRE=False" >> "$APP_DIR/.env.prod"
-    fi
+    set_env_kv "$APP_DIR/.env.prod" "DJANGO_DB_SSL_REQUIRE" "False"
     log "Set DJANGO_DB_SSL_REQUIRE=False for local docker postgres"
   fi
 
   if [ "$enable_https_raw" = "true" ]; then
-    if grep -qE '^DJANGO_SECURE_SSL_REDIRECT=' "$APP_DIR/.env.prod"; then
-      sed -i 's/^DJANGO_SECURE_SSL_REDIRECT=.*/DJANGO_SECURE_SSL_REDIRECT=True/' "$APP_DIR/.env.prod"
-    else
-      echo "DJANGO_SECURE_SSL_REDIRECT=True" >> "$APP_DIR/.env.prod"
-    fi
-    if grep -qE '^DJANGO_SESSION_COOKIE_SECURE=' "$APP_DIR/.env.prod"; then
-      sed -i 's/^DJANGO_SESSION_COOKIE_SECURE=.*/DJANGO_SESSION_COOKIE_SECURE=True/' "$APP_DIR/.env.prod"
-    else
-      echo "DJANGO_SESSION_COOKIE_SECURE=True" >> "$APP_DIR/.env.prod"
-    fi
-    if grep -qE '^DJANGO_CSRF_COOKIE_SECURE=' "$APP_DIR/.env.prod"; then
-      sed -i 's/^DJANGO_CSRF_COOKIE_SECURE=.*/DJANGO_CSRF_COOKIE_SECURE=True/' "$APP_DIR/.env.prod"
-    else
-      echo "DJANGO_CSRF_COOKIE_SECURE=True" >> "$APP_DIR/.env.prod"
-    fi
+    set_env_kv "$APP_DIR/.env.prod" "DJANGO_SECURE_SSL_REDIRECT" "True"
+    set_env_kv "$APP_DIR/.env.prod" "DJANGO_SESSION_COOKIE_SECURE" "True"
+    set_env_kv "$APP_DIR/.env.prod" "DJANGO_CSRF_COOKIE_SECURE" "True"
   else
-    if grep -qE '^DJANGO_SECURE_SSL_REDIRECT=' "$APP_DIR/.env.prod"; then
-      sed -i 's/^DJANGO_SECURE_SSL_REDIRECT=.*/DJANGO_SECURE_SSL_REDIRECT=False/' "$APP_DIR/.env.prod"
-    else
-      echo "DJANGO_SECURE_SSL_REDIRECT=False" >> "$APP_DIR/.env.prod"
-    fi
-    if grep -qE '^DJANGO_SESSION_COOKIE_SECURE=' "$APP_DIR/.env.prod"; then
-      sed -i 's/^DJANGO_SESSION_COOKIE_SECURE=.*/DJANGO_SESSION_COOKIE_SECURE=False/' "$APP_DIR/.env.prod"
-    else
-      echo "DJANGO_SESSION_COOKIE_SECURE=False" >> "$APP_DIR/.env.prod"
-    fi
-    if grep -qE '^DJANGO_CSRF_COOKIE_SECURE=' "$APP_DIR/.env.prod"; then
-      sed -i 's/^DJANGO_CSRF_COOKIE_SECURE=.*/DJANGO_CSRF_COOKIE_SECURE=False/' "$APP_DIR/.env.prod"
-    else
-      echo "DJANGO_CSRF_COOKIE_SECURE=False" >> "$APP_DIR/.env.prod"
-    fi
+    set_env_kv "$APP_DIR/.env.prod" "DJANGO_SECURE_SSL_REDIRECT" "False"
+    set_env_kv "$APP_DIR/.env.prod" "DJANGO_SESSION_COOKIE_SECURE" "False"
+    set_env_kv "$APP_DIR/.env.prod" "DJANGO_CSRF_COOKIE_SECURE" "False"
   fi
 
   cp "$APP_DIR/.env.prod" "$APP_DIR/backend/.env"
