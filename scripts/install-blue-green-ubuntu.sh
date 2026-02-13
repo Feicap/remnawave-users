@@ -109,6 +109,13 @@ choose_compose_base() {
   log "Using compose base: $COMPOSE_BASE"
 }
 
+ensure_legacy_backend_env_for_dev_compose() {
+  if [ "$COMPOSE_BASE" = "$APP_DIR/docker-compose.yml" ] && [ ! -f "$APP_DIR/backend/.env" ]; then
+    cp "$ENV_FILE" "$APP_DIR/backend/.env"
+    log "Created backend/.env from $ENV_FILE for docker-compose.yml compatibility"
+  fi
+}
+
 read_domain_from_env() {
   DOMAIN="$(grep -E '^NGINX_SERVER_NAME=' "$ENV_FILE" | tail -n1 | cut -d '=' -f2- || true)"
   if [ -z "$DOMAIN" ]; then
@@ -288,6 +295,7 @@ main() {
   prepare_repo
   choose_env_file
   choose_compose_base
+  ensure_legacy_backend_env_for_dev_compose
   read_domain_from_env
   get_active_color
   deploy_target_color
