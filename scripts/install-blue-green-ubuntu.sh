@@ -672,6 +672,7 @@ print_menu() {
   local green_label="green"
   local blue_suffix=""
   local green_suffix=""
+  local rollback_blue_label="Откат изменений (blue)"
   local install_hint=""
 
   if [ -f "$ACTIVE_FILE" ]; then
@@ -691,12 +692,13 @@ print_menu() {
   fi
   if [ "$active" = "blue" ]; then
     blue_suffix=" (active)"
+    rollback_blue_label="Откат изменений (blue) (уже active)"
   fi
 
   menu_print ""
   menu_print "${COLOR_YELLOW}Выберите действие:${COLOR_RESET}"
   menu_item "1" "Установка сайта${install_hint}"
-  menu_item "2" "Откат изменений (${blue_label})${blue_suffix}"
+  menu_item "2" "${rollback_blue_label}"
   menu_item "3" "${green_label}${green_suffix}"
   menu_item "4" "Удалить изменения"
   menu_item "0" "Выход из скрипта"
