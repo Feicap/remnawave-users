@@ -946,7 +946,12 @@ reload_nginx_with_site() {
   sudo ln -sf "$conf_path" /etc/nginx/sites-enabled/remnawave
   sudo rm -f /etc/nginx/sites-enabled/default
   sudo nginx -t
-  sudo systemctl reload nginx
+  if sudo systemctl is-active --quiet nginx; then
+    sudo systemctl reload nginx
+  else
+    log "nginx is not active, starting nginx service"
+    sudo systemctl start nginx
+  fi
 }
 
 obtain_letsencrypt_cert_for_domain() {
