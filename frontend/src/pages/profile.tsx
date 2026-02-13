@@ -158,7 +158,7 @@ export default function Profile() {
               <p className="text-gray-600 dark:text-white text-base font-medium leading-normal">Статус подписки</p>
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full bg-green-500"></span>
-                <p className="text-green-500 tracking-light text-2xl font-bold leading-tight">Активна</p>
+                <p className="text-green-500 tracking-light text-2xl font-bold leading-tight">LOLOLOLOL</p>
               </div>
             </div>
             <div className="flex flex-col gap-2 rounded-xl p-6 bg-white dark:bg-[#111722] border border-gray-200 dark:border-[#324467]">
