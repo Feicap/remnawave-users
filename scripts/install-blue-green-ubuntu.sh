@@ -62,6 +62,58 @@ menu_item() {
   menu_print "${COLOR_ORANGE}${num}${COLOR_RESET}. ${COLOR_YELLOW}${text}${COLOR_RESET}"
 }
 
+running_from_pipe_or_stdin() {
+  local src="${BASH_SOURCE[0]:-}"
+  case "$src" in
+    /dev/fd/*|/proc/self/fd/*|-|stdin|"")
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+extract_owner_repo_from_url() {
+  local url="$1"
+  local clean
+  clean="$(printf '%s' "$url" | sed -E 's#^https?://github.com/##; s#^git@github.com:##; s#\.git$##')"
+  if printf '%s' "$clean" | grep -Eq '^[^/]+/[^/]+$'; then
+    printf '%s' "$clean"
+    return 0
+  fi
+  return 1
+}
+
+resolve_fresh_script_url() {
+  local owner_repo
+  local head_sha
+
+  if ! owner_repo="$(extract_owner_repo_from_url "$REPO_URL")"; then
+    printf '%s' "$SCRIPT_RAW_URL"
+    return 0
+  fi
+
+  if command -v git >/dev/null 2>&1; then
+    head_sha="$(git ls-remote "$REPO_URL" refs/heads/main 2>/dev/null | awk 'NR==1 {print $1}')"
+    if [ -n "$head_sha" ]; then
+      printf 'https://raw.githubusercontent.com/%s/%s/scripts/install-blue-green-ubuntu.sh' "$owner_repo" "$head_sha"
+      return 0
+    fi
+  fi
+
+  printf '%s' "$SCRIPT_RAW_URL"
+}
+
+append_cache_bust() {
+  local url="$1"
+  local ts
+  ts="$(date +%s)"
+  if [[ "$url" == *"?"* ]]; then
+    printf '%s&ts=%s' "$url" "$ts"
+  else
+    printf '%s?ts=%s' "$url" "$ts"
+  fi
+}
+
 auto_refresh_script() {
   if [ "${SCRIPT_AUTO_REFRESHED:-0}" = "1" ]; then
     return
@@ -71,9 +123,19 @@ auto_refresh_script() {
     return
   fi
 
+  local refresh_url
+  local fetch_url
   local tmp_script
+
+  refresh_url="$(resolve_fresh_script_url)"
+  fetch_url="$(append_cache_bust "$refresh_url")"
+
+  if running_from_pipe_or_stdin; then
+    log "Running via pipe/stdin, forcing latest script refresh"
+  fi
+
   tmp_script="$(mktemp /tmp/remnawave-install.XXXXXX.sh)"
-  if curl "${CURL_REFRESH_ARGS[@]}" "${SCRIPT_RAW_URL}?ts=$(date +%s)" -o "$tmp_script"; then
+  if curl "${CURL_REFRESH_ARGS[@]}" "$fetch_url" -o "$tmp_script"; then
     log "Loaded latest script version from GitHub"
     chmod +x "$tmp_script"
     SCRIPT_AUTO_REFRESHED=1 bash "$tmp_script" "$@"
@@ -103,9 +165,13 @@ check_script_update() {
     return
   fi
 
+  local refresh_url
+  local fetch_url
   local tmp_script local_sum remote_sum
+  refresh_url="$(resolve_fresh_script_url)"
+  fetch_url="$(append_cache_bust "$refresh_url")"
   tmp_script="$(mktemp /tmp/remnawave-update-check.XXXXXX.sh)"
-  if ! curl "${CURL_REFRESH_ARGS[@]}" "${SCRIPT_RAW_URL}?ts=$(date +%s)" -o "$tmp_script"; then
+  if ! curl "${CURL_REFRESH_ARGS[@]}" "$fetch_url" -o "$tmp_script"; then
     rm -f "$tmp_script"
     return
   fi
@@ -120,9 +186,13 @@ check_script_update() {
 }
 
 update_script_now() {
+  local refresh_url
+  local fetch_url
   local tmp_script
+  refresh_url="$(resolve_fresh_script_url)"
+  fetch_url="$(append_cache_bust "$refresh_url")"
   tmp_script="$(mktemp /tmp/remnawave-install-update.XXXXXX.sh)"
-  if ! curl "${CURL_REFRESH_ARGS[@]}" "${SCRIPT_RAW_URL}?ts=$(date +%s)" -o "$tmp_script"; then
+  if ! curl "${CURL_REFRESH_ARGS[@]}" "$fetch_url" -o "$tmp_script"; then
     err "Не удалось скачать обновление скрипта"
     rm -f "$tmp_script"
     return 1
