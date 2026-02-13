@@ -90,7 +90,13 @@ check_script_update() {
     return
   fi
 
-  if [ ! -r "${BASH_SOURCE[0]}" ]; then
+  local local_script=""
+  if [ -n "${BASH_SOURCE[0]:-}" ] && [ -r "${BASH_SOURCE[0]}" ]; then
+    local_script="${BASH_SOURCE[0]}"
+  elif [ -r "$APP_DIR/scripts/install-blue-green-ubuntu.sh" ]; then
+    # Fallback for "curl | bash" where BASH_SOURCE can be a closed /dev/fd path.
+    local_script="$APP_DIR/scripts/install-blue-green-ubuntu.sh"
+  else
     return
   fi
 
@@ -101,7 +107,7 @@ check_script_update() {
     return
   fi
 
-  local_sum="$(sha256sum "${BASH_SOURCE[0]}" | awk '{print $1}')"
+  local_sum="$(sha256sum "$local_script" | awk '{print $1}')"
   remote_sum="$(sha256sum "$tmp_script" | awk '{print $1}')"
   rm -f "$tmp_script"
 
