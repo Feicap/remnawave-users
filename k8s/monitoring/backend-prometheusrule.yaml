@@ -1,0 +1,51 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: backend-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: remnawave-backend
+      rules:
+        - alert: RemnawaveBackendHigh5xxRate
+          expr: sum(rate(django_http_responses_total_by_status_total{status=~"5.."}[5m])) > 1
+          for: 10m
+          labels:
+            severity: warning
+            service: backend
+            namespace: remnawave
+          annotations:
+            summary: "High backend 5xx rate"
+            description: "Backend has elevated 5xx responses for 10 minutes."
+        - alert: RemnawaveBackendHighP95Latency
+          expr: histogram_quantile(0.95, sum(rate(django_http_requests_latency_including_middlewares_seconds_bucket[5m])) by (le)) > 1.5
+          for: 10m
+          labels:
+            severity: warning
+            service: backend
+            namespace: remnawave
+          annotations:
+            summary: "High backend p95 latency"
+            description: "Backend p95 latency is above 1.5s for 10 minutes."
+        - alert: RemnawaveBackendPodRestarts
+          expr: sum(increase(kube_pod_container_status_restarts_total{namespace="remnawave",container="backend"}[30m])) > 2
+          for: 5m
+          labels:
+            severity: warning
+            service: backend
+            namespace: remnawave
+          annotations:
+            summary: "Backend pod restarts detected"
+            description: "Backend container restarted more than 2 times in 30 minutes."
+        - alert: RemnawaveBackendPodNotReady
+          expr: sum(kube_pod_status_ready{namespace="remnawave",condition="true",pod=~"backend-.*"}) < 1
+          for: 5m
+          labels:
+            severity: critical
+            service: backend
+            namespace: remnawave
+          annotations:
+            summary: "No ready backend pods"
+            description: "No backend pod is in Ready state for more than 5 minutes."

@@ -53,6 +53,9 @@ DATABASE_URL=postgresql://postgres:your-db-password@postgres:5432/remnawave
 NGINX_SERVER_NAME=your-domain
 VITE_TELEGRAM_BOT_NAME=<имя_бота>
 VITE_API_URL=<домен>/api/
+GRAFANA_DOMAIN=your-domain
+# optional, default = POSTGRES_PASSWORD from DATABASE_URL
+# GRAFANA_ADMIN_PASSWORD=your-grafana-password
 EOF
 ```
 
@@ -69,6 +72,9 @@ EOF
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts/install-blue-green-ubuntu.sh | bash
 ```
+
+Инсталлятор автоматически пытается установить Grafana/Prometheus (kube-prometheus-stack), если доступен рабочий `kubectl`-контекст.
+Отключение: `ENABLE_MONITORING=false` в `.env.prod`.
 
 ### Установка Docker + Compose plugin
 ```bash
@@ -159,18 +165,34 @@ kubectl apply -f k8s/ingress.prod.yaml
 
 ## Grafana + Prometheus
 ```bash
+bash scripts/render-monitoring-values.sh .env.prod k8s/monitoring/values.prod.yaml
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring --create-namespace \
   -f k8s/monitoring/values.prod.yaml
+kubectl apply -k k8s/monitoring
 ```
 
 Проверка:
 ```bash
 kubectl get pods -n monitoring
 kubectl get ingress -n monitoring
+kubectl get servicemonitor -n monitoring
+kubectl get prometheusrule -n monitoring
 ```
+
+PowerShell (Windows):
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/render-monitoring-values.ps1 .env.prod k8s/monitoring/values.prod.yaml
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm upgrade --install monitoring prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace -f k8s/monitoring/values.prod.yaml
+kubectl apply -k k8s/monitoring
+```
+
+Подробная инструкция по использованию Grafana и рекомендуемым дашбордам:
+- `k8s/monitoring/README.md`
 
 ## Безопасность
 - Не коммитьте реальные `.env` и секреты.

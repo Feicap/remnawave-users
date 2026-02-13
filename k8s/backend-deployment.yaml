@@ -47,6 +47,8 @@ kind: Service
 metadata:
   name: backend
   namespace: remnawave
+  labels:
+    app: backend
 spec:
   selector:
     app: backend
@@ -54,4 +56,3 @@ spec:
   - name: http
     port: 8080
     targetPort: 8080
-

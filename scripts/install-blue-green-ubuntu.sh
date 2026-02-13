@@ -182,6 +182,74 @@ install_base_packages() {
   sudo apt install -y ca-certificates curl gnupg git nginx ufw certbot
 }
 
+install_helm_if_missing() {
+  if command -v helm >/dev/null 2>&1; then
+    return
+  fi
+
+  log "Helm not found, installing Helm"
+  curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+}
+
+is_k8s_ready() {
+  if ! command -v kubectl >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if ! kubectl get nodes >/dev/null 2>&1; then
+    return 1
+  fi
+
+  return 0
+}
+
+install_monitoring_stack() {
+  local enable_monitoring
+  local render_script
+  local values_file
+
+  enable_monitoring="$(grep -E '^ENABLE_MONITORING=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  enable_monitoring="${enable_monitoring,,}"
+  if [ -z "$enable_monitoring" ]; then
+    enable_monitoring="true"
+  fi
+
+  if [ "$enable_monitoring" != "true" ]; then
+    log "Monitoring installation disabled by ENABLE_MONITORING=$enable_monitoring"
+    return
+  fi
+
+  if ! is_k8s_ready; then
+    log "Kubernetes is not ready (kubectl context unavailable), skipping Grafana/Prometheus install"
+    return
+  fi
+
+  install_helm_if_missing
+
+  render_script="$APP_DIR/scripts/render-monitoring-values.sh"
+  values_file="$APP_DIR/k8s/monitoring/values.prod.yaml"
+
+  if [ ! -f "$render_script" ]; then
+    err "Missing render script: $render_script"
+    return
+  fi
+
+  log "Rendering monitoring values from .env.prod"
+  bash "$render_script" "$APP_DIR/.env.prod" "$values_file"
+
+  log "Installing/Updating kube-prometheus-stack (Grafana + Prometheus)"
+  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+  helm repo update
+  helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+    --namespace monitoring --create-namespace \
+    -f "$values_file"
+
+  log "Applying project monitoring resources"
+  kubectl apply -k "$APP_DIR/k8s/monitoring"
+
+  log "Monitoring stack is installed"
+}
+
 install_docker_if_missing() {
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     return
@@ -253,9 +321,13 @@ prepare_env_files() {
     fi
   fi
 
+  # Normalize line endings if env was edited on Windows (CRLF -> LF).
+  sed -i 's/\r$//' "$APP_DIR/.env.prod"
+
   local db_url
   local ssl_require
   local db_password
+  local grafana_password
   local enable_https_raw
   db_url="$(grep -E '^DATABASE_URL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
   ssl_require="$(grep -E '^DJANGO_DB_SSL_REQUIRE=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
@@ -274,6 +346,12 @@ prepare_env_files() {
       echo "POSTGRES_PASSWORD=$db_password" >> "$APP_DIR/.env.prod"
     fi
     log "Synchronized POSTGRES_PASSWORD with DATABASE_URL"
+  fi
+
+  grafana_password="$(grep -E '^GRAFANA_ADMIN_PASSWORD=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  if [ -z "$grafana_password" ] && [ -n "$db_password" ]; then
+    echo "GRAFANA_ADMIN_PASSWORD=$db_password" >> "$APP_DIR/.env.prod"
+    log "Set GRAFANA_ADMIN_PASSWORD from POSTGRES_PASSWORD"
   fi
 
   if [[ "$db_url" == *"@postgres:"* || "$db_url" == *"@remnawave-blue-postgres-1:"* || "$db_url" == *"@remnawave-green-postgres-1:"* ]]; then
@@ -761,6 +839,7 @@ run_deploy_flow() {
   deploy_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT"
   health_check_target
   switch_nginx
+  install_monitoring_stack
   log "Keeping ${OLD_COLOR} stack running for fast rollback"
   summary
 }
