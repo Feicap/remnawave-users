@@ -819,7 +819,7 @@ server {
     }
 
     location ${GRAFANA_SUBPATH}/ {
-        proxy_pass http://127.0.0.1:${GRAFANA_NODEPORT}/;
+        proxy_pass http://127.0.0.1:${GRAFANA_NODEPORT};
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -888,7 +888,7 @@ server {
     }
 
     location ${GRAFANA_SUBPATH}/ {
-        proxy_pass http://127.0.0.1:${GRAFANA_NODEPORT}/;
+        proxy_pass http://127.0.0.1:${GRAFANA_NODEPORT};
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
