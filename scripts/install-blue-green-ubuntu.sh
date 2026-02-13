@@ -19,17 +19,34 @@ err() { printf '[ERROR] %s\n' "$*" >&2; }
 
 setup_interactive_tty() {
   if [ -t 0 ] && [ -t 1 ]; then
+    MENU_INPUT="/dev/stdin"
+    MENU_OUTPUT="/dev/stdout"
     return
   fi
 
   if [ -r /dev/tty ] && [ -w /dev/tty ]; then
-    # When script is started via "curl | bash", stdin is a pipe. Rebind to tty for menu mode.
-    exec </dev/tty >/dev/tty 2>&1
+    MENU_INPUT="/dev/tty"
+    MENU_OUTPUT="/dev/tty"
     return
   fi
 
   err "Interactive input is unavailable. Run script from a terminal."
   exit 1
+}
+
+menu_print() {
+  printf "%s\n" "$1" > "$MENU_OUTPUT"
+}
+
+menu_read() {
+  local prompt="$1"
+  local __resultvar="$2"
+  local value
+  printf "%s" "$prompt" > "$MENU_OUTPUT"
+  if ! IFS= read -r value < "$MENU_INPUT"; then
+    return 1
+  fi
+  printf -v "$__resultvar" "%s" "$value"
 }
 
 compose_for_color() {
@@ -558,23 +575,22 @@ print_menu() {
     green_label="3. Переключение на blue (активен)"
   fi
 
-  echo
-  echo "Выберите действие:"
-  echo "1. Установить сайт"
+  menu_print ""
+  menu_print "Выберите действие:"
+  menu_print "1. Установить сайт"
   if site_installed; then
-    echo "$blue_label"
-    echo "$green_label"
-    echo "4. Удаление всех изменений"
+    menu_print "$blue_label"
+    menu_print "$green_label"
+    menu_print "4. Удаление всех изменений"
   fi
-  echo "0. Выход из скрипта"
+  menu_print "0. Выход из скрипта"
 }
 
 main() {
   setup_interactive_tty
   while true; do
     print_menu
-    printf "> "
-    if ! read -r choice; then
+    if ! menu_read "> " choice; then
       err "Не удалось прочитать выбор пункта меню"
       continue
     fi
@@ -599,8 +615,7 @@ main() {
         ;;
       4)
         if site_installed; then
-          printf "Подтвердите удаление (yes/no): "
-          if ! read -r confirm; then
+          if ! menu_read "Подтвердите удаление (yes/no): " confirm; then
             err "Не удалось прочитать подтверждение"
             continue
           fi
