@@ -89,6 +89,12 @@ def telegram_login(request: HttpRequest) -> JsonResponse:
     )
 
 
+def health_check(request: HttpRequest) -> JsonResponse:
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid method"}, status=405)
+    return JsonResponse({"status": "ok"})
+
+
 @csrf_exempt
 def payment_proofs_collection(request: HttpRequest) -> JsonResponse:
     user_id, username = _extract_auth_user(request)

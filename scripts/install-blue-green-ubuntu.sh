@@ -452,10 +452,10 @@ health_check_target() {
   fi
 
   log "Checking backend on ${TARGET_BACKEND_PORT}"
-  if ! wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}" "$DOMAIN" 90; then
+  if ! wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}/api/health/" "$DOMAIN" 90; then
     if maybe_recover_db_password_mismatch; then
       log "Retrying backend health check after DB reset"
-      if wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}" "$DOMAIN" 120; then
+      if wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}/api/health/" "$DOMAIN" 120; then
         return 0
       fi
     fi
