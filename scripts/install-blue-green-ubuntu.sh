@@ -59,7 +59,16 @@ auto_refresh_script() {
 
   local tmp_script
   tmp_script="$(mktemp /tmp/remnawave-install.XXXXXX.sh)"
-  if curl -fsSL "${SCRIPT_RAW_URL}?ts=$(date +%s)" -o "$tmp_script"; then
+  if curl -fsSL \
+    --connect-timeout 10 \
+    --max-time 60 \
+    --retry 3 \
+    -H "Cache-Control: no-cache, no-store, must-revalidate" \
+    -H "Pragma: no-cache" \
+    -H "Expires: 0" \
+    "${SCRIPT_RAW_URL}?ts=$(date +%s)" \
+    -o "$tmp_script"; then
+    log "Loaded latest script version from GitHub"
     chmod +x "$tmp_script"
     SCRIPT_AUTO_REFRESHED=1 bash "$tmp_script" "$@"
     local exit_code=$?
@@ -67,6 +76,7 @@ auto_refresh_script() {
     exit "$exit_code"
   fi
 
+  err "Failed to fetch latest script version, continuing with current copy"
   rm -f "$tmp_script"
 }
 
