@@ -191,9 +191,23 @@ install_helm_if_missing() {
   curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 }
 
+K3S_KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
+
+ensure_k3s_service_running() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return
+  fi
+  if systemctl list-unit-files | grep -q '^k3s\.service'; then
+    if ! sudo systemctl is-active --quiet k3s; then
+      log "Starting k3s service"
+      sudo systemctl start k3s
+    fi
+  fi
+}
+
 set_kubeconfig_from_k3s_if_present() {
-  if [ -f /etc/rancher/k3s/k3s.yaml ]; then
-    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+  if [ -f "$K3S_KUBECONFIG" ]; then
+    export KUBECONFIG="$K3S_KUBECONFIG"
   fi
 }
 
@@ -218,22 +232,33 @@ install_k3s_if_needed() {
   log "Installing k3s (kubectl context was unavailable)"
   curl -sfL https://get.k3s.io | sh -
 
+  ensure_k3s_service_running
   set_kubeconfig_from_k3s_if_present
 
   return 0
 }
 
 is_k8s_ready() {
+  local cfg
   set_kubeconfig_from_k3s_if_present
+  ensure_k3s_service_running
+
   if ! command -v kubectl >/dev/null 2>&1; then
     return 1
   fi
 
-  if ! kubectl get nodes >/dev/null 2>&1; then
-    return 1
+  if kubectl get nodes >/dev/null 2>&1; then
+    return 0
   fi
 
-  return 0
+  for cfg in "$K3S_KUBECONFIG" "$HOME/.kube/config"; do
+    if [ -f "$cfg" ] && KUBECONFIG="$cfg" kubectl get nodes >/dev/null 2>&1; then
+      export KUBECONFIG="$cfg"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 ensure_k8s_ready() {
@@ -283,6 +308,8 @@ install_monitoring_stack() {
 
   render_script="$APP_DIR/scripts/render-monitoring-values.sh"
   values_file="$APP_DIR/k8s/monitoring/values.prod.yaml"
+  local kubeconfig_path
+  kubeconfig_path="${KUBECONFIG:-$K3S_KUBECONFIG}"
 
   if [ ! -f "$render_script" ]; then
     err "Missing render script: $render_script"
@@ -293,14 +320,14 @@ install_monitoring_stack() {
   bash "$render_script" "$APP_DIR/.env.prod" "$values_file"
 
   log "Installing/Updating kube-prometheus-stack (Grafana + Prometheus)"
-  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
-  helm repo update
-  helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+  KUBECONFIG="$kubeconfig_path" helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+  KUBECONFIG="$kubeconfig_path" helm repo update
+  KUBECONFIG="$kubeconfig_path" helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
     --namespace monitoring --create-namespace \
     -f "$values_file"
 
   log "Applying project monitoring resources"
-  kubectl apply -k "$APP_DIR/k8s/monitoring"
+  KUBECONFIG="$kubeconfig_path" kubectl apply -k "$APP_DIR/k8s/monitoring"
 
   log "Monitoring stack is installed"
 }
