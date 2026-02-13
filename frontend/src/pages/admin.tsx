@@ -8,7 +8,7 @@ interface AuthenticatedUser extends TelegramUser {
   token: string
 }
 
-const GRAFANA_URL = 'http://grafanaz.ftp.sh:81'
+const GRAFANA_URL = 'https://grafanaz.ftp.sh'
 
 const ADMIN_ROWS = [
   { id: '@john_doe', plan: 'Премиум (месяц)', status: 'Активен', end: '2026-03-31', statusColor: 'text-green-500 bg-green-500/10' },

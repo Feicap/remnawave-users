@@ -549,11 +549,15 @@ read_domain_from_env() {
     GRAFANA_NODEPORT="32000"
   fi
   if [ -z "$GRAFANA_PUBLIC_PORT" ]; then
-    GRAFANA_PUBLIC_PORT="81"
+    GRAFANA_PUBLIC_PORT="80"
   fi
   ENABLE_HTTPS="${ENABLE_HTTPS,,}"
   if [ -z "$ENABLE_HTTPS" ]; then
     ENABLE_HTTPS="false"
+  fi
+  if [ "$ENABLE_HTTPS" = "true" ] && [ "$GRAFANA_PUBLIC_PORT" != "80" ]; then
+    log "ENABLE_HTTPS=true requires port 80 for ACME HTTP-01; overriding GRAFANA_PUBLIC_PORT=$GRAFANA_PUBLIC_PORT -> 80"
+    GRAFANA_PUBLIC_PORT="80"
   fi
   export DOMAIN
   export GRAFANA_DOMAIN
@@ -740,7 +744,7 @@ EOF
     sudo tee -a "$conf_path" >/dev/null <<EOF
 
 server {
-    listen ${GRAFANA_PUBLIC_PORT};
+    listen 80;
     server_name ${GRAFANA_DOMAIN};
     client_max_body_size 15m;
 
@@ -841,7 +845,7 @@ EOF
     sudo tee -a "$conf_path" >/dev/null <<EOF
 
 server {
-    listen ${GRAFANA_PUBLIC_PORT};
+    listen 80;
     server_name ${GRAFANA_DOMAIN};
     client_max_body_size 15m;
 
@@ -946,12 +950,12 @@ switch_nginx() {
   reload_nginx_with_site
   obtain_letsencrypt_cert_for_domain "$DOMAIN"
   if [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ]; then
-    if [ "$GRAFANA_PUBLIC_PORT" = "80" ]; then
+    if [ "$ENABLE_HTTPS" = "true" ]; then
       if ! obtain_letsencrypt_cert_for_domain "$GRAFANA_DOMAIN"; then
         err "Failed to issue certificate for ${GRAFANA_DOMAIN}; keeping Grafana on HTTP until DNS/port 80 is fixed"
       fi
     else
-      log "Skipping Grafana certificate request because GRAFANA_PUBLIC_PORT=${GRAFANA_PUBLIC_PORT} (HTTP-01 requires port 80)"
+      log "Skipping Grafana certificate request because ENABLE_HTTPS=${ENABLE_HTTPS}"
     fi
   fi
   if [ "$ENABLE_HTTPS" = "true" ] && has_letsencrypt_cert_for_domain "$DOMAIN"; then
