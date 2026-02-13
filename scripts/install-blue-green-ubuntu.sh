@@ -377,7 +377,7 @@ prepare_env_files() {
 
   if [[ "$db_url" == *"@postgres:"* || "$db_url" == *"@remnawave-blue-postgres-1:"* || "$db_url" == *"@remnawave-green-postgres-1:"* ]]; then
     local db_url_shared
-    db_url_shared="$(echo "$db_url" | sed -E 's|@(postgres|remnawave-blue-postgres-1|remnawave-green-postgres-1):|@remnawave-shared-postgres:|')"
+    db_url_shared="$(echo "$db_url" | sed -E 's#@(postgres|remnawave-blue-postgres-1|remnawave-green-postgres-1):#@remnawave-shared-postgres:#')"
     set_env_kv "$APP_DIR/.env.prod" "DATABASE_URL" "$db_url_shared"
     db_url="$db_url_shared"
     log "Updated DATABASE_URL to shared postgres host"
