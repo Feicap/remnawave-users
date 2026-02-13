@@ -679,11 +679,11 @@ print_menu() {
   fi
 
   if [ "$active" = "blue" ]; then
-    install_hint=" (установит на green)"
+    install_hint=" (установит обновление на green)"
   elif [ "$active" = "green" ]; then
-    install_hint=" (установит на blue)"
+    install_hint=" (установит обновление на blue)"
   else
-    install_hint=" (установит на blue)"
+    install_hint=" (установит обновление на blue)"
   fi
 
   if [ "$active" = "green" ]; then
@@ -696,19 +696,9 @@ print_menu() {
   menu_print ""
   menu_print "${COLOR_YELLOW}Выберите действие:${COLOR_RESET}"
   menu_item "1" "Установка сайта${install_hint}"
-
-  if site_installed && (color_stack_exists "blue" "$BLUE_BACKEND_PORT" "$BLUE_FRONTEND_PORT" || [ "$active" = "blue" ]); then
-    menu_item "2" "${blue_label}${blue_suffix}"
-  else
-    menu_item "2" "${blue_label} (недоступно)"
-  fi
-
-  if site_installed && (color_stack_exists "green" "$GREEN_BACKEND_PORT" "$GREEN_FRONTEND_PORT" || [ "$active" = "green" ]); then
-    menu_item "3" "${green_label}${green_suffix}"
-  else
-    menu_item "3" "${green_label} (недоступно)"
-  fi
-
+  menu_item "2" "Откат изменений (${blue_label})${blue_suffix}"
+  menu_item "3" "${green_label}${green_suffix}"
+  menu_item "4" "Удалить изменения"
   menu_item "0" "Выход из скрипта"
 }
 
@@ -761,6 +751,17 @@ main() {
             fi
           else
             err "green не развернут"
+          fi
+        else
+          err "Сайт не установлен"
+        fi
+        ;;
+      4)
+        if site_installed; then
+          if confirm_action "Удалить все изменения проекта?"; then
+            remove_all_changes
+          else
+            log "Операция отменена"
           fi
         else
           err "Сайт не установлен"
