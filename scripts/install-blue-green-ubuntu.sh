@@ -78,17 +78,16 @@ choose_env_file() {
     return
   fi
 
-  # Keep backward compatibility with .env.rpod typo, then .env.prod.
-  if [ -f "$APP_DIR/.env.rpod" ]; then
-    ENV_FILE="$APP_DIR/.env.rpod"
-  elif [ -f "$APP_DIR/.env.prod" ]; then
+  if [ -f "$APP_DIR/.env.prod" ]; then
     ENV_FILE="$APP_DIR/.env.prod"
+  elif [ -f "$APP_DIR/.env.rpod" ]; then
+    ENV_FILE="$APP_DIR/.env.rpod"
   elif [ -f "$APP_DIR/.env.prod.example" ]; then
     cp "$APP_DIR/.env.prod.example" "$APP_DIR/.env.prod"
     ENV_FILE="$APP_DIR/.env.prod"
-    log "Created $APP_DIR/.env.prod from example. Fill secrets before real production deploy"
+    log "Created $APP_DIR/.env.prod from example. Fill secrets before production deploy"
   else
-    err "Missing .env.rpod/.env.prod/.env.prod.example"
+    err "Missing .env.prod/.env.rpod/.env.prod.example"
     exit 1
   fi
 
@@ -96,28 +95,18 @@ choose_env_file() {
   log "Using env file: $ENV_FILE"
 }
 
-ensure_backend_env_prod() {
-  if [ ! -f "$APP_DIR/backend/.env.prod" ]; then
-    cp "$APP_DIR/backend/.env.example" "$APP_DIR/backend/.env.prod"
-    log "Created backend/.env.prod from backend/.env.example"
-  fi
-}
-
-sync_frontend_env() {
-  local vite_bot_name
-  vite_bot_name="$(grep -E '^VITE_TELEGRAM_BOT_NAME=' "$ENV_FILE" | tail -n1 | cut -d '=' -f2- || true)"
-
-  if [ ! -f "$APP_DIR/frontend/.env" ] && [ -f "$APP_DIR/frontend/.env.example" ]; then
-    cp "$APP_DIR/frontend/.env.example" "$APP_DIR/frontend/.env"
+choose_compose_base() {
+  if [ -f "$APP_DIR/docker-compose.prod.yml" ]; then
+    COMPOSE_BASE="$APP_DIR/docker-compose.prod.yml"
+  elif [ -f "$APP_DIR/docker-compose.yml" ]; then
+    COMPOSE_BASE="$APP_DIR/docker-compose.yml"
+  else
+    err "Missing docker-compose.prod.yml and docker-compose.yml"
+    exit 1
   fi
 
-  if [ -n "$vite_bot_name" ]; then
-    if grep -q '^VITE_TELEGRAM_BOT_NAME=' "$APP_DIR/frontend/.env"; then
-      sed -i "s|^VITE_TELEGRAM_BOT_NAME=.*$|VITE_TELEGRAM_BOT_NAME=$vite_bot_name|" "$APP_DIR/frontend/.env"
-    else
-      echo "VITE_TELEGRAM_BOT_NAME=$vite_bot_name" >> "$APP_DIR/frontend/.env"
-    fi
-  fi
+  export COMPOSE_BASE
+  log "Using compose base: $COMPOSE_BASE"
 }
 
 read_domain_from_env() {
@@ -139,39 +128,71 @@ get_active_color() {
     TARGET_COLOR="green"
     TARGET_BACKEND_PORT=$GREEN_BACKEND_PORT
     TARGET_FRONTEND_PORT=$GREEN_FRONTEND_PORT
+    OLD_COLOR="blue"
+    OLD_BACKEND_PORT=$BLUE_BACKEND_PORT
+    OLD_FRONTEND_PORT=$BLUE_FRONTEND_PORT
   else
     TARGET_COLOR="blue"
     TARGET_BACKEND_PORT=$BLUE_BACKEND_PORT
     TARGET_FRONTEND_PORT=$BLUE_FRONTEND_PORT
+    OLD_COLOR="green"
+    OLD_BACKEND_PORT=$GREEN_BACKEND_PORT
+    OLD_FRONTEND_PORT=$GREEN_FRONTEND_PORT
   fi
 
-  export ACTIVE_COLOR TARGET_COLOR TARGET_BACKEND_PORT TARGET_FRONTEND_PORT
+  export ACTIVE_COLOR TARGET_COLOR TARGET_BACKEND_PORT TARGET_FRONTEND_PORT OLD_COLOR OLD_BACKEND_PORT OLD_FRONTEND_PORT
 }
 
-render_compose_for_target() {
-  mkdir -p "$TMP_DIR"
-  TARGET_COMPOSE="$TMP_DIR/docker-compose.${TARGET_COLOR}.yml"
+create_override_file() {
+  local color="$1"
+  local backend_port="$2"
+  local frontend_port="$3"
+  local out_file="$TMP_DIR/compose.override.$color.yml"
 
-  sed \
-    -e "s|127.0.0.1:8080:8080|127.0.0.1:${TARGET_BACKEND_PORT}:8080|g" \
-    -e "s|127.0.0.1:8081:80|127.0.0.1:${TARGET_FRONTEND_PORT}:80|g" \
-    "$APP_DIR/docker-compose.prod.yml" > "$TARGET_COMPOSE"
+  cat > "$out_file" <<EOF
+services:
+  backend:
+    env_file:
+      - ./.env.prod
+    environment:
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+      DJANGO_DB_SSL_REQUIRE: ${DJANGO_DB_SSL_REQUIRE:-True}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-jobrhyme.raspberryip.com}
+      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-https://jobrhyme.raspberryip.com}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:Super2025ReN@postgres:5432/remnawave}
+    ports:
+      - "127.0.0.1:${backend_port}:8080"
 
-  export TARGET_COMPOSE
+  frontend:
+    build:
+      args:
+        VITE_TELEGRAM_BOT_NAME: ${VITE_TELEGRAM_BOT_NAME:-}
+    environment:
+      NGINX_SERVER_NAME: ${NGINX_SERVER_NAME:-jobrhyme.raspberryip.com}
+    ports:
+      - "127.0.0.1:${frontend_port}:80"
+EOF
+
+  printf '%s' "$out_file"
 }
 
 deploy_target_color() {
+  mkdir -p "$TMP_DIR"
+  TARGET_OVERRIDE="$(create_override_file "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT")"
+  export TARGET_OVERRIDE
+
   log "Deploying ${TARGET_COLOR} (backend:${TARGET_BACKEND_PORT}, frontend:${TARGET_FRONTEND_PORT})"
   docker compose \
     --env-file "$ENV_FILE" \
     -p "remnawave-${TARGET_COLOR}" \
-    -f "$TARGET_COMPOSE" \
+    -f "$COMPOSE_BASE" \
+    -f "$TARGET_OVERRIDE" \
     up -d --build --remove-orphans
 }
 
 wait_http() {
   local url="$1"
-  local max_tries="${2:-30}"
+  local max_tries="${2:-40}"
   local i
 
   for i in $(seq 1 "$max_tries"); do
@@ -186,13 +207,13 @@ wait_http() {
 
 health_check_target() {
   log "Checking frontend on ${TARGET_FRONTEND_PORT}"
-  if ! wait_http "http://127.0.0.1:${TARGET_FRONTEND_PORT}" 40; then
+  if ! wait_http "http://127.0.0.1:${TARGET_FRONTEND_PORT}"; then
     err "Frontend did not start on port ${TARGET_FRONTEND_PORT}"
     exit 1
   fi
 
   log "Checking backend on ${TARGET_BACKEND_PORT}"
-  if ! wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}" 40; then
+  if ! wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}"; then
     err "Backend did not start on port ${TARGET_BACKEND_PORT}"
     exit 1
   fi
@@ -236,17 +257,27 @@ EOF
 }
 
 stop_old_color() {
-  log "Stopping old color: ${ACTIVE_COLOR}"
+  local old_override
+
+  old_override="$(create_override_file "$OLD_COLOR" "$OLD_BACKEND_PORT" "$OLD_FRONTEND_PORT")"
+
+  log "Stopping old color: ${OLD_COLOR}"
   docker compose \
     --env-file "$ENV_FILE" \
-    -p "remnawave-${ACTIVE_COLOR}" \
-    -f "$APP_DIR/docker-compose.prod.yml" \
+    -p "remnawave-${OLD_COLOR}" \
+    -f "$COMPOSE_BASE" \
+    -f "$old_override" \
     down || true
 }
 
 summary() {
   log "Done. Active color: ${TARGET_COLOR}"
-  docker compose -p "remnawave-${TARGET_COLOR}" -f "$TARGET_COMPOSE" ps
+  docker compose \
+    --env-file "$ENV_FILE" \
+    -p "remnawave-${TARGET_COLOR}" \
+    -f "$COMPOSE_BASE" \
+    -f "$TARGET_OVERRIDE" \
+    ps
 }
 
 main() {
@@ -256,11 +287,9 @@ main() {
   install_docker_if_missing
   prepare_repo
   choose_env_file
-  ensure_backend_env_prod
-  sync_frontend_env
+  choose_compose_base
   read_domain_from_env
   get_active_color
-  render_compose_for_target
   deploy_target_color
   health_check_target
   switch_nginx
