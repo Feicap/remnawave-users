@@ -160,11 +160,16 @@ deploy_color() {
 
 wait_http() {
   local url="$1"
-  local max_tries="${2:-90}"
+  local host_header="${2:-}"
+  local max_tries="${3:-90}"
   local i
 
   for i in $(seq 1 "$max_tries"); do
-    if curl -fsS -m 3 -o /dev/null "$url" 2>/dev/null; then
+    if [ -n "$host_header" ]; then
+      if curl -fsS -m 3 -H "Host: $host_header" -o /dev/null "$url" 2>/dev/null; then
+        return 0
+      fi
+    elif curl -fsS -m 3 -o /dev/null "$url" 2>/dev/null; then
       return 0
     fi
     sleep 2
@@ -187,14 +192,14 @@ print_target_debug() {
 health_check_target() {
   sleep 3
   log "Checking frontend on ${TARGET_FRONTEND_PORT}"
-  if ! wait_http "http://127.0.0.1:${TARGET_FRONTEND_PORT}" 60; then
+  if ! wait_http "http://127.0.0.1:${TARGET_FRONTEND_PORT}" "$DOMAIN" 60; then
     err "Frontend did not start on port ${TARGET_FRONTEND_PORT}"
     print_target_debug
     exit 1
   fi
 
   log "Checking backend on ${TARGET_BACKEND_PORT}"
-  if ! wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}" 90; then
+  if ! wait_http "http://127.0.0.1:${TARGET_BACKEND_PORT}" "$DOMAIN" 90; then
     err "Backend did not start on port ${TARGET_BACKEND_PORT}"
     print_target_debug
     exit 1
