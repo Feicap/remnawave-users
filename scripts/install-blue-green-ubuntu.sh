@@ -274,12 +274,12 @@ set_target_color() {
     OLD_BACKEND_PORT=$GREEN_BACKEND_PORT
     OLD_FRONTEND_PORT=$GREEN_FRONTEND_PORT
   else
-    TARGET_COLOR="green"
-    TARGET_BACKEND_PORT=$GREEN_BACKEND_PORT
-    TARGET_FRONTEND_PORT=$GREEN_FRONTEND_PORT
-    OLD_COLOR="blue"
-    OLD_BACKEND_PORT=$BLUE_BACKEND_PORT
-    OLD_FRONTEND_PORT=$BLUE_FRONTEND_PORT
+    TARGET_COLOR="blue"
+    TARGET_BACKEND_PORT=$BLUE_BACKEND_PORT
+    TARGET_FRONTEND_PORT=$BLUE_FRONTEND_PORT
+    OLD_COLOR="green"
+    OLD_BACKEND_PORT=$GREEN_BACKEND_PORT
+    OLD_FRONTEND_PORT=$GREEN_FRONTEND_PORT
   fi
 
   export TARGET_COLOR TARGET_BACKEND_PORT TARGET_FRONTEND_PORT OLD_COLOR OLD_BACKEND_PORT OLD_FRONTEND_PORT
@@ -649,7 +649,7 @@ print_menu() {
   elif [ "$active" = "green" ]; then
     install_hint=" (установит на blue)"
   else
-    install_hint=" (установит на green)"
+    install_hint=" (установит на blue)"
   fi
 
   if [ "$active" = "green" ]; then
