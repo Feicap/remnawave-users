@@ -1,212 +1,252 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router'
+import type { TelegramUser } from '../types/telegram'
+import type { PaymentProof, PaymentProofUser, PaymentStatus } from '../types/payment'
+import { buildAuthHeaders, getStoredUser } from '../utils/auth'
+import { isAdminUserId } from '../utils/admin'
 
-export default function Admin_check() {
+interface AuthenticatedUser extends TelegramUser {
+  token: string
+}
+
+function statusBadge(status: PaymentStatus): { label: string; className: string } {
+  if (status === 'approved') {
+    return { label: 'Подтверждено', className: 'text-green-500 bg-green-500/10' }
+  }
+  if (status === 'rejected') {
+    return { label: 'Отклонено', className: 'text-red-500 bg-red-500/10' }
+  }
+  return { label: 'Ожидает', className: 'text-gray-500 bg-gray-500/10' }
+}
+
+export default function AdminCheck() {
+  const navigate = useNavigate()
+  const [user] = useState<AuthenticatedUser | null>(() => getStoredUser() as AuthenticatedUser | null)
+  const [users, setUsers] = useState<PaymentProofUser[]>([])
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
+  const [proofs, setProofs] = useState<PaymentProof[]>([])
+  const [error, setError] = useState('')
+  const [isUpdating, setIsUpdating] = useState(false)
+
+  const isAdmin = useMemo(() => (user ? isAdminUserId(user.id) : false), [user])
+
+  const loadUsers = useCallback(async () => {
+    if (!user) {
+      return
+    }
+    const res = await fetch('/api/admin/payment-proofs/users/', { headers: buildAuthHeaders(user) })
+    if (!res.ok) {
+      throw new Error('Не удалось загрузить список пользователей')
+    }
+    const payload = (await res.json()) as { items: PaymentProofUser[] }
+    setUsers(payload.items)
+    if (!selectedUserId && payload.items.length > 0) {
+      setSelectedUserId(payload.items[0].user_id)
+    }
+  }, [user, selectedUserId])
+
+  const loadProofs = useCallback(async () => {
+    if (!user || !selectedUserId) {
+      return
+    }
+    const res = await fetch(`/api/admin/payment-proofs/?user_id=${selectedUserId}`, { headers: buildAuthHeaders(user) })
+    if (!res.ok) {
+      throw new Error('Не удалось загрузить заявки пользователя')
+    }
+    const payload = (await res.json()) as { items: PaymentProof[] }
+    setProofs(payload.items)
+  }, [user, selectedUserId])
+
+  useEffect(() => {
+    if (!user) {
+      navigate('/auth')
+      return
+    }
+    if (!isAdminUserId(user.id)) {
+      navigate('/profile')
+      return
+    }
+
+    Promise.all([loadUsers(), loadProofs()]).catch((e: unknown) => {
+      setError(e instanceof Error ? e.message : 'Ошибка загрузки')
+    })
+
+    const interval = setInterval(() => {
+      Promise.all([loadUsers(), loadProofs()]).catch(() => {
+        // Ignore polling errors silently.
+      })
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [navigate, user, loadUsers, loadProofs])
+
+  useEffect(() => {
+    loadProofs().catch((e: unknown) => {
+      setError(e instanceof Error ? e.message : 'Ошибка загрузки')
+    })
+  }, [loadProofs])
+
+  if (!user || !isAdmin) {
+    return <div>Loading...</div>
+  }
+
+  async function updateStatus(proofId: number, status: Exclude<PaymentStatus, 'pending'>) {
+    if (!user) {
+      return
+    }
+    setIsUpdating(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/admin/payment-proofs/${proofId}/`, {
+        method: 'PATCH',
+        headers: {
+          ...buildAuthHeaders(user),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status }),
+      })
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({ error: 'Ошибка модерации' }))) as { error?: string }
+        throw new Error(payload.error || 'Ошибка модерации')
+      }
+      await Promise.all([loadUsers(), loadProofs()])
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Ошибка модерации')
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
+  function handleBackToAdmin() {
+    navigate('/admin')
+  }
+
+  function handleBackToProfile() {
+    navigate('/profile')
+  }
+
+  function handleLogout() {
+    localStorage.removeItem('tg_user')
+    localStorage.removeItem('token')
+    localStorage.removeItem('subscription_url')
+    navigate('/auth')
+  }
+
   return (
-<div className="flex h-screen w-screen">
-<aside className="flex w-64 flex-col border-r border-border-dark bg-surface-dark">
-<div className="flex h-16 items-center gap-3 px-6 border-b border-border-dark">
-<div className="text-primary size-8 flex items-center justify-center">
-<svg fill="none" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-<path clipRule="evenodd" d="M24 4H6V17.3333V30.6667H24V44H42V30.6667V17.3333H24V4Z" fill="currentColor" fillRule="evenodd"></path>
-</svg>
-</div>
-<h1 className="text-text-primary-dark text-lg font-bold leading-normal">VPN Менеджер</h1>
-</div>
-<nav className="flex flex-col gap-2 p-4 flex-grow">
-<a className="flex items-center gap-3 rounded-lg px-4 py-2 text-text-secondary-dark hover:bg-primary/10 hover:text-primary" href="#">
-<span className="material-symbols-outlined text-inherit">dashboard</span>
-<p className="text-sm font-medium leading-normal">Дашборд</p>
-</a>
-<a className="flex items-center gap-3 rounded-lg px-4 py-2 text-text-secondary-dark hover:bg-primary/10 hover:text-primary" href="#">
-<span className="material-symbols-outlined text-inherit">group</span>
-<p className="text-sm font-medium leading-normal">Пользователи</p>
-</a>
-<a className="flex items-center gap-3 rounded-lg px-4 py-2 text-white bg-primary" href="#">
-<span className="material-symbols-outlined text-inherit !font-bold" style={{fontVariationSettings: "'FILL' 1"}}>credit_card</span>
-<p className="text-sm font-medium leading-normal">Оплата VPN</p>
-</a>
-</nav>
-<div className="p-4 border-t border-border-dark">
-<a className="flex items-center gap-3 rounded-lg px-4 py-2 text-text-secondary-dark hover:bg-danger/10 hover:text-danger" href="#">
-<span className="material-symbols-outlined text-inherit">logout</span>
-<p className="text-sm font-medium leading-normal">Выйти</p>
-</a>
-</div>
-</aside>
-<div className="flex flex-1 flex-col overflow-y-auto">
-<header className="flex h-16 items-center justify-end border-b border-solid border-border-dark bg-surface-dark px-6">
-<div className="flex items-center gap-4">
-<div className="flex items-center gap-3">
-<div className="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10" data-alt="Admin user avatar" style={{ backgroundImage: 'url("https://lh3.googleusercontent.com/aida-public/AB6AXuBDNVBUWuTbi0rj58hZvhGYvOEibW1_-g8jocTI6w7603tRWrQ--eoTRur0Z9n92CB1so0AdpLN_msCqcCg2CNzPideF-OfuaRfOkKoXbJiGe_JzpVsGtRbHI7wK6iGa6QkxghsVW-QTW-5M04DtQYaQO-NGxUYFk8GcbQXbwUK-ULt_5mbSEb7Wx0S17-AD4gSjuosXTlTc09QFfc-24qc6Hbn-A1mlWF8s4niJQCnEkZigqkSff_LDdm0nwpoAjyKYn6vyWXlbKU")' }}></div>
-<div className="flex-col hidden md:flex">
-<p className="text-sm font-semibold text-text-primary-dark">Администратор</p>
-<p className="text-xs text-text-secondary-dark">admin@vpn.com</p>
-</div>
-</div>
-</div>
-</header>
-<main className="flex-1 p-6 lg:p-8">
-<div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-<div className="flex flex-col">
-<h1 className="text-3xl font-bold tracking-tight text-text-primary-dark">Оплата VPN</h1>
-<p className="text-text-secondary-dark">Просмотр и подтверждение платежей от пользователей.</p>
-</div>
-</div>
-<div className="mb-4 rounded-xl border border-border-dark bg-surface-dark p-4">
-<div className="flex flex-col gap-4 md:flex-row md:items-center">
-<div className="flex-1">
-<label className="relative flex">
-<div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-<span className="material-symbols-outlined text-text-secondary-dark">search</span>
-</div>
-<input className="form-input block h-10 w-full rounded-lg border-border-dark bg-background-dark py-2 pl-10 pr-3 text-sm text-text-primary-dark placeholder:text-text-secondary-dark focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" placeholder="Поиск по ID пользователя..." type="search"/>
-</label>
-</div>
-<div className="flex items-center gap-2">
-<button className="flex h-10 shrink-0 items-center justify-center gap-x-2 rounded-lg bg-primary/20 px-4 text-sm font-medium text-primary hover:bg-primary/30">
-                                Новые
-                            </button>
-<button className="flex h-10 shrink-0 items-center justify-center gap-x-2 rounded-lg bg-background-dark px-4 text-sm font-medium text-text-secondary-dark hover:bg-surface-dark/80">
-                                Подтвержденные
-                            </button>
-<button className="flex h-10 shrink-0 items-center justify-center gap-x-2 rounded-lg bg-background-dark px-4 text-sm font-medium text-text-secondary-dark hover:bg-surface-dark/80">
-                                Отклоненные
-                            </button>
-</div>
-</div>
-</div>
-<div className="overflow-hidden rounded-xl border border-border-dark bg-surface-dark">
-<div className="overflow-x-auto">
-<table className="min-w-full divide-y divide-border-dark">
-<thead className="bg-background-dark/50">
-<tr>
-<th className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-text-primary-dark sm:pl-6" scope="col">ID пользователя</th>
-<th className="px-3 py-3.5 text-left text-sm font-semibold text-text-primary-dark" scope="col">Скриншот оплаты</th>
-<th className="px-3 py-3.5 text-left text-sm font-semibold text-text-primary-dark" scope="col">Дата отправки</th>
-<th className="relative py-3.5 pl-3 pr-4 sm:pr-6" scope="col"><span className="sr-only">Действия</span></th>
-</tr>
-</thead>
-<tbody className="divide-y divide-border-dark bg-surface-dark">
-<tr>
-<td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-text-primary-dark sm:pl-6">@john_doe</td>
-<td className="whitespace-nowrap px-3 py-4 text-sm">
-<button className="flex items-center gap-2 text-primary hover:underline">
-<span className="material-symbols-outlined text-inherit" style={{fontSize: 20}}>image</span>
-<span>Посмотреть</span>
-</button>
-</td>
-<td className="whitespace-nowrap px-3 py-4 text-sm text-text-secondary-dark">2024-07-22 14:30</td>
-<td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
-<div className="flex items-center justify-end gap-2">
-<button className="flex h-8 items-center justify-center gap-2 rounded-md bg-success/20 px-3 text-xs font-medium text-success hover:bg-success/30">
-<span className="material-symbols-outlined text-inherit" style={{fontSize:16}}>check_circle</span>
-<span>Подтвердить</span>
-</button>
-<button className="flex h-8 items-center justify-center gap-2 rounded-md bg-danger/20 px-3 text-xs font-medium text-danger hover:bg-danger/30">
-<span className="material-symbols-outlined text-inherit" style={{fontSize:16}}>cancel</span>
-<span>Отклонить</span>
-</button>
-</div>
-</td>
-</tr>
-<tr>
-<td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-text-primary-dark sm:pl-6">@jane_smith</td>
-<td className="whitespace-nowrap px-3 py-4 text-sm">
-<button className="flex items-center gap-2 text-primary hover:underline">
-<span className="material-symbols-outlined text-inherit" style={{fontSize: 20}}>image</span>
-<span>Посмотреть</span>
-</button>
-</td>
-<td className="whitespace-nowrap px-3 py-4 text-sm text-text-secondary-dark">2024-07-22 11:15</td>
-<td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
-<div className="flex items-center justify-end gap-2">
-<button className="flex h-8 items-center justify-center gap-2 rounded-md bg-success/20 px-3 text-xs font-medium text-success hover:bg-success/30">
-<span className="material-symbols-outlined text-inherit" style={{fontSize:16}}>check_circle</span>
-<span>Подтвердить</span>
-</button>
-<button className="flex h-8 items-center justify-center gap-2 rounded-md bg-danger/20 px-3 text-xs font-medium text-danger hover:bg-danger/30">
-<span className="material-symbols-outlined text-inherit" style={{fontSize:16}}>cancel</span>
-<span>Отклонить</span>
-</button>
-</div>
-</td>
-</tr>
-<tr>
-<td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-text-primary-dark sm:pl-6">@test_user</td>
-<td className="whitespace-nowrap px-3 py-4 text-sm">
-<button className="flex items-center gap-2 text-primary hover:underline">
-<span className="material-symbols-outlined text-inherit" style={{fontSize: 20}}>image</span>
-<span>Посмотреть</span>
-</button>
-</td>
-<td className="whitespace-nowrap px-3 py-4 text-sm text-text-secondary-dark">2024-07-21 20:05</td>
-<td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
-<div className="flex items-center justify-end gap-2">
-<button className="flex h-8 items-center justify-center gap-2 rounded-md bg-success/20 px-3 text-xs font-medium text-success hover:bg-success/30">
-<span className="material-symbols-outlined text-inherit" style={{fontSize:16}}>check_circle</span>
-<span>Подтвердить</span>
-</button>
-<button className="flex h-8 items-center justify-center gap-2 rounded-md bg-danger/20 px-3 text-xs font-medium text-danger hover:bg-danger/30">
-<span className="material-symbols-outlined text-inherit" style={{fontSize:16}}>cancel</span>
-<span>Отклонить</span>
-</button>
-</div>
-</td>
-</tr>
-<tr>
-<td className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-text-primary-dark sm:pl-6">@sam_wilson</td>
-<td className="whitespace-nowrap px-3 py-4 text-sm">
-<button className="flex items-center gap-2 text-primary hover:underline">
-<span className="material-symbols-outlined text-inherit" style={{fontSize: 20}}>image</span>
-<span>Посмотреть</span>
-</button>
-</td>
-<td className="whitespace-nowrap px-3 py-4 text-sm text-text-secondary-dark">2024-07-21 09:48</td>
-<td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
-<div className="flex items-center justify-end gap-2">
-<button className="flex h-8 items-center justify-center gap-2 rounded-md bg-success/20 px-3 text-xs font-medium text-success hover:bg-success/30">
-<span className="material-symbols-outlined text-inherit" style={{fontSize:16}}>check_circle</span>
-<span>Подтвердить</span>
-</button>
-<button className="flex h-8 items-center justify-center gap-2 rounded-md bg-danger/20 px-3 text-xs font-medium text-danger hover:bg-danger/30">
-<span className="material-symbols-outlined text-inherit" style={{fontSize:16}}>cancel</span>
-<span>Отклонить</span>
-</button>
-</div>
-</td>
-</tr>
-</tbody>
-</table>
-</div>
-<div className="flex items-center justify-between border-t border-border-dark px-4 py-3 sm:px-6">
-<div className="flex flex-1 justify-between sm:hidden">
-<a className="relative inline-flex items-center rounded-md border border-border-dark bg-surface-dark px-4 py-2 text-sm font-medium text-text-secondary-dark hover:bg-surface-dark/80" href="#">Назад</a>
-<a className="relative ml-3 inline-flex items-center rounded-md border border-border-dark bg-surface-dark px-4 py-2 text-sm font-medium text-text-secondary-dark hover:bg-surface-dark/80" href="#">Вперед</a>
-</div>
-<div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
-<div>
-<p className="text-sm text-text-secondary-dark">Показано с <span className="font-medium">1</span> по <span className="font-medium">4</span> из <span className="font-medium">25</span> заявок</p>
-</div>
-<div>
-<nav aria-label="Pagination" className="isolate inline-flex -space-x-px rounded-md shadow-sm">
-<a className="relative inline-flex items-center rounded-l-md px-2 py-2 text-text-secondary-dark ring-1 ring-inset ring-border-dark hover:bg-surface-dark/80 focus:z-20 focus:outline-offset-0" href="#">
-<span className="material-symbols-outlined" style={{fontSize: 20}}>chevron_left</span>
-</a>
-<a aria-current="page" className="relative z-10 inline-flex items-center bg-primary/10 text-primary px-4 py-2 text-sm font-semibold focus:z-20" href="#">1</a>
-<a className="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-secondary-dark ring-1 ring-inset ring-border-dark hover:bg-surface-dark/80 focus:z-20" href="#">2</a>
-<a className="relative hidden items-center px-4 py-2 text-sm font-semibold text-text-secondary-dark ring-1 ring-inset ring-border-dark hover:bg-surface-dark/80 focus:z-20 md:inline-flex" href="#">3</a>
-<span className="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-secondary-dark ring-1 ring-inset ring-border-dark">...</span>
-<a className="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-text-secondary-dark ring-1 ring-inset ring-border-dark hover:bg-surface-dark/80 focus:z-20" href="#">7</a>
-<a className="relative inline-flex items-center rounded-r-md px-2 py-2 text-text-secondary-dark ring-1 ring-inset ring-border-dark hover:bg-surface-dark/80 focus:z-20" href="#">
-<span className="material-symbols-outlined" style={{fontSize: 20}}>chevron_right</span>
-</a>
-</nav>
-</div>
-</div>
-</div>
-</div>
-</main>
-</div>
-</div>
+    <div className="flex h-screen">
+      <aside className="w-64 flex-shrink-0 bg-white dark:bg-[#111722] p-4 flex flex-col justify-between border-r border-gray-200 dark:border-gray-800">
+        <div className="flex flex-col gap-8">
+          <div className="flex items-center gap-3 px-2">
+            <span className="material-symbols-outlined text-primary text-3xl">shield</span>
+            <span className="text-xl font-bold text-gray-900 dark:text-white">Мой VPS</span>
+          </div>
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={handleBackToAdmin}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 dark:bg-[#232f48] text-left"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-primary dark:text-white">credit_card</span>
+              <p className="text-primary dark:text-white text-sm font-medium leading-normal">Проверка оплаты</p>
+            </button>
+            <button
+              onClick={handleBackToProfile}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-gray-500 dark:text-white">arrow_back</span>
+              <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Обратно в профиль</p>
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-col gap-4">
+          <button
+            onClick={handleLogout}
+            className="flex w-full cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] hover:bg-primary/90"
+          >
+            <span className="truncate">Выйти</span>
+          </button>
+        </div>
+      </aside>
 
-)
+      <main className="flex-1 p-6 lg:p-10 overflow-y-auto">
+        <div className="max-w-7xl mx-auto flex gap-6 h-full">
+          <section className="w-80 bg-white dark:bg-[#111722] rounded-xl border border-gray-200 dark:border-[#324467] p-4 overflow-y-auto">
+            <h2 className="text-gray-900 dark:text-white text-lg font-bold mb-4">Пользователи</h2>
+            <div className="flex flex-col gap-2">
+              {users.map((item) => (
+                <button
+                  key={item.user_id}
+                  onClick={() => setSelectedUserId(item.user_id)}
+                  className={`w-full rounded-lg px-3 py-2 text-left border ${
+                    selectedUserId === item.user_id
+                      ? 'border-primary bg-primary/10'
+                      : 'border-gray-200 dark:border-[#324467] hover:bg-gray-50 dark:hover:bg-[#1a2539]'
+                  }`}
+                  type="button"
+                >
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white">{item.username || `id:${item.user_id}`}</p>
+                  <p className="text-xs text-gray-500 dark:text-[#92a4c9]">ID: {item.user_id}</p>
+                  {item.pending_count > 0 ? (
+                    <p className="text-xs text-yellow-500 mt-1">Ожидают: {item.pending_count}</p>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="flex-1 bg-white dark:bg-[#111722] rounded-xl border border-gray-200 dark:border-[#324467] p-6 overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-gray-900 dark:text-white text-lg font-bold">Заявки пользователя</h2>
+              {error ? <p className="text-sm text-red-500">{error}</p> : null}
+            </div>
+
+            <div className="flex flex-col gap-4">
+              {proofs.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Нет заявок для выбранного пользователя.</p>
+              ) : (
+                proofs.map((proof) => {
+                  const badge = statusBadge(proof.status)
+                  return (
+                    <div key={proof.id} className="rounded-xl border border-gray-200 dark:border-[#324467] p-4 bg-gray-50 dark:bg-[#1a2539]">
+                      <img alt={`proof-${proof.id}`} className="w-full max-h-96 object-contain rounded-lg mb-3" src={proof.file_url} />
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm text-gray-900 dark:text-white">Отправлено: {new Date(proof.created_at).toLocaleString('ru-RU')}</p>
+                          <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium mt-2 ${badge.className}`}>
+                            {badge.label}
+                          </span>
+                        </div>
+                        {proof.status === 'pending' ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => updateStatus(proof.id, 'approved')}
+                              className="flex h-9 items-center gap-1 rounded-md bg-green-500/20 px-3 text-sm font-medium text-green-500 hover:bg-green-500/30 disabled:opacity-60"
+                              disabled={isUpdating}
+                              type="button"
+                            >
+                              <span className="material-symbols-outlined text-base">check_circle</span>
+                              <span>Подтвердить</span>
+                            </button>
+                            <button
+                              onClick={() => updateStatus(proof.id, 'rejected')}
+                              className="flex h-9 items-center gap-1 rounded-md bg-red-500/20 px-3 text-sm font-medium text-red-500 hover:bg-red-500/30 disabled:opacity-60"
+                              disabled={isUpdating}
+                              type="button"
+                            >
+                              <span className="material-symbols-outlined text-base">cancel</span>
+                              <span>Отклонить</span>
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  )
 }

@@ -106,6 +106,8 @@ STATIC_URL = "static/"
 STATIC_ROOT = PROJECT_ROOT / "backend" / "staticfiles"
 frontend_assets_dir = PROJECT_ROOT / "frontend" / "dist" / "assets"
 STATICFILES_DIRS = [frontend_assets_dir] if frontend_assets_dir.exists() else []
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
 
 csrf_trusted_origins_raw = os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "")
 CSRF_TRUSTED_ORIGINS = [

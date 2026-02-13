@@ -472,6 +472,7 @@ write_nginx_http_config() {
 server {
     listen 80;
     server_name ${DOMAIN};
+    client_max_body_size 15m;
 
     location /.well-known/acme-challenge/ {
         root ${CERTBOT_WEBROOT};
@@ -506,6 +507,7 @@ write_nginx_https_config() {
 server {
     listen 80;
     server_name ${DOMAIN};
+    client_max_body_size 15m;
 
     location /.well-known/acme-challenge/ {
         root ${CERTBOT_WEBROOT};
@@ -519,6 +521,7 @@ server {
 server {
     listen 443 ssl http2;
     server_name ${DOMAIN};
+    client_max_body_size 15m;
 
     ssl_certificate ${cert_dir}/fullchain.pem;
     ssl_certificate_key ${cert_dir}/privkey.pem;

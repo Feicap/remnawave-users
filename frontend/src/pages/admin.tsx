@@ -1,23 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import type { TelegramUser } from '../types/telegram'
+import { getStoredUser } from '../utils/auth'
 import { isAdminUserId } from '../utils/admin'
 
 interface AuthenticatedUser extends TelegramUser {
   token: string
-}
-
-function getStoredUser(): AuthenticatedUser | null {
-  const stored = localStorage.getItem('tg_user')
-  if (!stored) {
-    return null
-  }
-
-  try {
-    return JSON.parse(stored) as AuthenticatedUser
-  } catch {
-    return null
-  }
 }
 
 const ADMIN_ROWS = [
@@ -29,7 +17,7 @@ const ADMIN_ROWS = [
 
 export default function Admin() {
   const navigate = useNavigate()
-  const [user] = useState<AuthenticatedUser | null>(() => getStoredUser())
+  const [user] = useState<AuthenticatedUser | null>(() => getStoredUser() as AuthenticatedUser | null)
 
   useEffect(() => {
     if (!user) {
@@ -42,17 +30,16 @@ export default function Admin() {
     }
   }, [navigate, user])
 
-  if (!user) {
-    return <div>Loading...</div>
-  }
-
-  const canViewAdminPanel = isAdminUserId(user.id)
-  if (!canViewAdminPanel) {
+  if (!user || !isAdminUserId(user.id)) {
     return <div>Loading...</div>
   }
 
   function handleBackToProfile() {
     navigate('/profile')
+  }
+
+  function handlePaymentCheck() {
+    navigate('/admin-check')
   }
 
   function handleLogout() {
@@ -91,6 +78,14 @@ export default function Admin() {
                 <p className="text-primary dark:text-white text-sm font-medium leading-normal">Админ панель</p>
               </a>
               <button
+                onClick={handlePaymentCheck}
+                className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"
+                type="button"
+              >
+                <span className="material-symbols-outlined text-gray-500 dark:text-white">credit_card</span>
+                <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Проверка оплаты</p>
+              </button>
+              <button
                 onClick={handleBackToProfile}
                 className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"
                 type="button"
@@ -111,7 +106,7 @@ export default function Admin() {
         </div>
       </aside>
 
-      <main className="flex-1 p-6 lg:p-10">
+      <main className="flex-1 p-6 lg:p-10 overflow-y-auto">
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-wrap justify-between items-center gap-4 mb-8">
             <div className="flex flex-col gap-1">
