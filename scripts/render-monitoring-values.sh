@@ -22,6 +22,7 @@ GRAFANA_SUBPATH="${GRAFANA_SUBPATH:-/dashboard}"
 PROMETHEUS_RETENTION="${PROMETHEUS_RETENTION:-15d}"
 PROMETHEUS_STORAGE_SIZE="${PROMETHEUS_STORAGE_SIZE:-20Gi}"
 GRAFANA_STORAGE_SIZE="${GRAFANA_STORAGE_SIZE:-5Gi}"
+ENABLE_HTTPS="${ENABLE_HTTPS:-false}"
 
 if [ -z "$GRAFANA_DOMAIN" ]; then
   echo "[ERROR] GRAFANA_DOMAIN is empty (set GRAFANA_DOMAIN or NGINX_SERVER_NAME in $ENV_FILE)" >&2
@@ -39,6 +40,14 @@ fi
 GRAFANA_SUBPATH="${GRAFANA_SUBPATH%/}"
 if [ -z "$GRAFANA_SUBPATH" ]; then
   GRAFANA_SUBPATH="/dashboard"
+fi
+
+ENABLE_HTTPS="${ENABLE_HTTPS,,}"
+PROM_SCRAPE_SCHEME="http"
+PROM_TLS_BLOCK=""
+if [ "$ENABLE_HTTPS" = "true" ]; then
+  PROM_SCRAPE_SCHEME="https"
+  PROM_TLS_BLOCK=$'        tls_config:\n          insecure_skip_verify: true'
 fi
 
 yaml_sq_escape() {
@@ -74,6 +83,15 @@ prometheus:
     enabled: false
   prometheusSpec:
     retention: '$(yaml_sq_escape "$PROMETHEUS_RETENTION")'
+    additionalScrapeConfigs:
+      - job_name: 'remnawave-docker-backend'
+        metrics_path: '/api/metrics'
+        scheme: '$(yaml_sq_escape "$PROM_SCRAPE_SCHEME")'
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        static_configs:
+          - targets: ['$(yaml_sq_escape "$GRAFANA_DOMAIN")']
+$PROM_TLS_BLOCK
     storageSpec:
       volumeClaimTemplate:
         spec:

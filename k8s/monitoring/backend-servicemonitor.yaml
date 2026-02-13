@@ -1,17 +1,17 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: backend
+  name: blackbox-exporter
   namespace: monitoring
   labels:
     release: monitoring
 spec:
   namespaceSelector:
     matchNames:
-      - remnawave
+      - monitoring
   selector:
     matchLabels:
-      app: backend
+      app: blackbox-exporter
   endpoints:
     - port: http
       path: /metrics

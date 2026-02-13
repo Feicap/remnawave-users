@@ -20,6 +20,16 @@ prometheus:
     enabled: false
   prometheusSpec:
     retention: 15d
+    additionalScrapeConfigs:
+      - job_name: remnawave-docker-backend
+        metrics_path: /api/metrics
+        scheme: https
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        static_configs:
+          - targets: ["your-domain"]
+        tls_config:
+          insecure_skip_verify: true
     storageSpec:
       volumeClaimTemplate:
         spec:

@@ -437,7 +437,7 @@ deploy_k8s_app_for_monitoring_if_enabled() {
   fi
 
   if ! is_k8s_app_deploy_enabled; then
-    log "K8s app deploy is disabled (ENABLE_K8S_APP_DEPLOY=false). Monitoring dashboards for app metrics may stay empty."
+    log "K8s app deploy is disabled (ENABLE_K8S_APP_DEPLOY=false). Using Docker monitoring targets."
     return 0
   fi
 
@@ -513,6 +513,11 @@ validate_monitoring_app_target() {
   local kubeconfig_path
   kubeconfig_path="${KUBECONFIG:-$K3S_KUBECONFIG}"
 
+  if ! is_k8s_app_deploy_enabled; then
+    log "Monitoring target mode: docker (frontend probe + backend probe + backend /api/metrics scrape)"
+    return
+  fi
+
   if ! KUBECONFIG="$kubeconfig_path" kubectl get ns remnawave >/dev/null 2>&1; then
     err "Namespace remnawave not found in k8s. Prometheus cannot scrape backend app metrics."
     return
@@ -524,6 +529,41 @@ validate_monitoring_app_target() {
   fi
 
   log "Monitoring target check passed: remnawave/backend service exists"
+}
+
+apply_docker_probe_resources() {
+  local kubeconfig_path
+  local probe_template
+  local probe_rendered
+  local scheme
+  local frontend_url
+  local backend_health_url
+
+  kubeconfig_path="${KUBECONFIG:-$K3S_KUBECONFIG}"
+  probe_template="$APP_DIR/k8s/monitoring/docker-probes.template.yaml"
+  probe_rendered="/tmp/remnawave-docker-probes.yaml"
+
+  if [ ! -f "$probe_template" ]; then
+    err "Missing probe template: $probe_template"
+    return 1
+  fi
+
+  if [ "${ENABLE_HTTPS:-false}" = "true" ]; then
+    scheme="https"
+  else
+    scheme="http"
+  fi
+
+  frontend_url="${scheme}://${DOMAIN}/"
+  backend_health_url="${scheme}://${DOMAIN}/api/health/"
+
+  sed \
+    -e "s#__FRONTEND_URL__#${frontend_url}#g" \
+    -e "s#__BACKEND_HEALTH_URL__#${backend_health_url}#g" \
+    "$probe_template" > "$probe_rendered"
+
+  KUBECONFIG="$kubeconfig_path" kubectl apply -f "$probe_rendered"
+  rm -f "$probe_rendered"
 }
 
 install_monitoring_stack() {
@@ -565,6 +605,7 @@ install_monitoring_stack() {
 
   log "Applying project monitoring resources"
   KUBECONFIG="$kubeconfig_path" kubectl apply -k "$APP_DIR/k8s/monitoring"
+  apply_docker_probe_resources
 
   validate_monitoring_app_target
   log "Monitoring stack is installed"

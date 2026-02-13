@@ -45,6 +45,7 @@ $grafanaSubpath = Get-EnvValue -Map $envMap -Primary "GRAFANA_SUBPATH" -Default 
 $prometheusRetention = Get-EnvValue -Map $envMap -Primary "PROMETHEUS_RETENTION" -Default "15d"
 $prometheusStorageSize = Get-EnvValue -Map $envMap -Primary "PROMETHEUS_STORAGE_SIZE" -Default "20Gi"
 $grafanaStorageSize = Get-EnvValue -Map $envMap -Primary "GRAFANA_STORAGE_SIZE" -Default "5Gi"
+$enableHttps = (Get-EnvValue -Map $envMap -Primary "ENABLE_HTTPS" -Default "false").ToLowerInvariant()
 
 if ([string]::IsNullOrWhiteSpace($grafanaDomain)) {
   Write-Error "GRAFANA_DOMAIN is empty (set GRAFANA_DOMAIN or NGINX_SERVER_NAME in $EnvFile)"
@@ -66,6 +67,15 @@ $grafanaSubpathEsc = Escape-YamlSingleQuoted $grafanaSubpath
 $prometheusRetentionEsc = Escape-YamlSingleQuoted $prometheusRetention
 $prometheusStorageSizeEsc = Escape-YamlSingleQuoted $prometheusStorageSize
 $grafanaStorageSizeEsc = Escape-YamlSingleQuoted $grafanaStorageSize
+$promScrapeSchemeEsc = "http"
+$promTlsBlock = ""
+if ($enableHttps -eq "true") {
+  $promScrapeSchemeEsc = "https"
+  $promTlsBlock = @"
+        tls_config:
+          insecure_skip_verify: true
+"@
+}
 
 $content = @"
 grafana:
@@ -95,6 +105,15 @@ prometheus:
     enabled: false
   prometheusSpec:
     retention: '$prometheusRetentionEsc'
+    additionalScrapeConfigs:
+      - job_name: 'remnawave-docker-backend'
+        metrics_path: '/api/metrics'
+        scheme: '$promScrapeSchemeEsc'
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        static_configs:
+          - targets: ['$grafanaDomainEsc']
+$promTlsBlock
     storageSpec:
       volumeClaimTemplate:
         spec:

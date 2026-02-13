@@ -59,7 +59,8 @@ GRAFANA_DOMAIN=your-domain
 # GRAFANA_ADMIN_PASSWORD=your-grafana-password
 GRAFANA_NODEPORT=32000
 GRAFANA_SUBPATH=/dashboard
-ENABLE_K8S_APP_DEPLOY=true
+ENABLE_K8S_APP_DEPLOY=false
+# required only when ENABLE_K8S_APP_DEPLOY=true
 K8S_BACKEND_IMAGE=ghcr.io/your-org/remnawave-backend:latest
 K8S_FRONTEND_IMAGE=ghcr.io/your-org/remnawave-frontend:latest
 # optional for private registry
@@ -90,10 +91,9 @@ curl -fsSL https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts
 При включённом мониторинге скрипт автоматически отключает встроенный `k3s` Traefik, чтобы он не перехватывал порты `80/443`.
 Отключение: `ENABLE_MONITORING=false` в `.env.prod`.
 Отключить автоустановку k3s: `ENABLE_K3S_AUTO_INSTALL=false` в `.env.prod`.
-Опционально развернуть app в k8s для app-метрик: `ENABLE_K8S_APP_DEPLOY=true`.
-Для этого в `.env.prod` обязательно задайте `K8S_BACKEND_IMAGE` и `K8S_FRONTEND_IMAGE`.
+По умолчанию метрики берутся с Docker-приложения через домен (`/api/metrics`) и HTTP probes (`/`, `/api/health/`), это работает при `ENABLE_K8S_APP_DEPLOY=false`.
+Опционально можно развернуть app в k8s (`ENABLE_K8S_APP_DEPLOY=true`), тогда в `.env.prod` нужно задать `K8S_BACKEND_IMAGE` и `K8S_FRONTEND_IMAGE`.
 Если registry приватный, задайте `K8S_IMAGE_PULL_SECRET` и креды `K8S_IMAGE_PULL_SECRET_USERNAME`/`K8S_IMAGE_PULL_SECRET_PASSWORD`.
-Скрипт сам проставит образы в `deploy/backend` и `deploy/frontend`, а также синхронизирует `backend-secret` из `.env.prod`.
 
 ### Установка Docker + Compose plugin
 ```bash
@@ -167,6 +167,7 @@ helm upgrade --install cert-manager jetstack/cert-manager \
 
 2. Используйте локальные prod-файлы:
 ```bash
+# backend-secret опционален, инсталлятор умеет синхронизировать его из .env.prod
 cp k8s/backend-secret.example.yaml k8s/backend-secret.yaml
 # при необходимости создайте/обновите:
 # k8s/ingress.prod.yaml

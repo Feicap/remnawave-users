@@ -29,23 +29,23 @@ spec:
           annotations:
             summary: "High backend p95 latency"
             description: "Backend p95 latency is above 1.5s for 10 minutes."
-        - alert: RemnawaveBackendPodRestarts
-          expr: sum(increase(kube_pod_container_status_restarts_total{namespace="remnawave",container="backend"}[30m])) > 2
-          for: 5m
-          labels:
-            severity: warning
-            service: backend
-            namespace: remnawave
-          annotations:
-            summary: "Backend pod restarts detected"
-            description: "Backend container restarted more than 2 times in 30 minutes."
-        - alert: RemnawaveBackendPodNotReady
-          expr: sum(kube_pod_status_ready{namespace="remnawave",condition="true",pod=~"backend-.*"}) < 1
+        - alert: RemnawaveBackendProbeDown
+          expr: avg_over_time(probe_success{job="remnawave-backend-health-probe"}[5m]) < 0.8
           for: 5m
           labels:
             severity: critical
             service: backend
-            namespace: remnawave
+            namespace: docker
           annotations:
-            summary: "No ready backend pods"
-            description: "No backend pod is in Ready state for more than 5 minutes."
+            summary: "Backend health probe is failing"
+            description: "Public backend health endpoint has been failing for 5 minutes."
+        - alert: RemnawaveFrontendProbeDown
+          expr: avg_over_time(probe_success{job="remnawave-frontend-probe"}[5m]) < 0.8
+          for: 5m
+          labels:
+            severity: critical
+            service: frontend
+            namespace: docker
+          annotations:
+            summary: "Frontend probe is failing"
+            description: "Public frontend endpoint has been failing for 5 minutes."

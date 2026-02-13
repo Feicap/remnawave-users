@@ -22,10 +22,15 @@ helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
   -f k8s/monitoring/values.prod.yaml
 ```
 
-## 2) Enable backend app scraping
+## 2) Apply monitoring resources for Docker app targets
 
-Backend app metrics are exposed on `/metrics` (Django + `django-prometheus`).
-Apply all monitoring resources for this repo:
+This repo now monitors Docker frontend/backend via:
+- backend metrics scrape: `https://<domain>/api/metrics` (or `http://` when `ENABLE_HTTPS=false`)
+- blackbox probes:
+  - frontend URL `/`
+  - backend health URL `/api/health/`
+
+Apply monitoring resources:
 
 ```bash
 kubectl apply -k k8s/monitoring
@@ -40,7 +45,10 @@ kubectl get prometheusrule -n monitoring
 kubectl get configmap -n monitoring | grep grafana-dashboard-remnawave-backend
 ```
 
-In Prometheus UI (`Status -> Targets`), target `backend` should be `UP`.
+In Prometheus UI (`Status -> Targets`), targets should include:
+- `remnawave-docker-backend` (metrics scrape)
+- `remnawave-frontend-probe`
+- `remnawave-backend-health-probe`
 
 ## 4) Open Grafana
 
@@ -67,10 +75,10 @@ kubectl rollout restart deploy/monitoring-grafana -n monitoring
 ```
 
 4. Validate panels:
-   - Requests per second (RPS)
-   - p95 latency
-   - 5xx error rate
-   - Pod restarts
+   - Backend RPS
+   - Backend p95 latency
+   - Backend 5xx rate
+   - Frontend availability
 
 Recommended starter queries:
 
@@ -87,8 +95,8 @@ histogram_quantile(
   sum by (le) (rate(django_http_requests_latency_seconds_by_view_method_bucket[5m]))
 )
 
-# Pod restarts in namespace
-sum(increase(kube_pod_container_status_restarts_total{namespace="remnawave"}[30m]))
+# Frontend availability (1.0 = up)
+avg_over_time(probe_success{job="remnawave-frontend-probe"}[5m])
 ```
 
 ## 6) Alert rules in this repo

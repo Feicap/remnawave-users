@@ -1,0 +1,35 @@
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: docker-frontend
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  jobName: remnawave-frontend-probe
+  interval: 30s
+  module: http_2xx
+  prober:
+    url: blackbox-exporter.monitoring.svc:9115
+  targets:
+    staticConfig:
+      static:
+        - "__FRONTEND_URL__"
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: docker-backend-health
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  jobName: remnawave-backend-health-probe
+  interval: 30s
+  module: http_2xx
+  prober:
+    url: blackbox-exporter.monitoring.svc:9115
+  targets:
+    staticConfig:
+      static:
+        - "__BACKEND_HEALTH_URL__"

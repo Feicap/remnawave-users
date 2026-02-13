@@ -157,7 +157,7 @@ data:
               "color": {
                 "mode": "palette-classic"
               },
-              "unit": "none"
+              "unit": "percentunit"
             },
             "overrides": []
           },
@@ -181,13 +181,13 @@ data:
           "targets": [
             {
               "editorMode": "code",
-              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"remnawave\",container=\"backend\"}[30m]))",
-              "legendFormat": "restarts/30m",
+              "expr": "avg_over_time(probe_success{job=\"remnawave-frontend-probe\"}[5m])",
+              "legendFormat": "frontend up (5m avg)",
               "range": true,
               "refId": "A"
             }
           ],
-          "title": "Backend Restarts",
+          "title": "Frontend Availability",
           "type": "timeseries"
         }
       ],
