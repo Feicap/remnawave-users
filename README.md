@@ -82,6 +82,7 @@ curl -fsSL https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts
 При включённом мониторинге скрипт автоматически отключает встроенный `k3s` Traefik, чтобы он не перехватывал порты `80/443`.
 Отключение: `ENABLE_MONITORING=false` в `.env.prod`.
 Отключить автоустановку k3s: `ENABLE_K3S_AUTO_INSTALL=false` в `.env.prod`.
+Опционально развернуть app в k8s для app-метрик: `ENABLE_K8S_APP_DEPLOY=true` (понадобятся подготовленные k8s prod-манифесты/секреты).
 
 ### Установка Docker + Compose plugin
 ```bash

@@ -192,6 +192,16 @@ is_monitoring_enabled() {
   [ "$enable_monitoring" = "true" ]
 }
 
+is_k8s_app_deploy_enabled() {
+  local enable_k8s_app_deploy
+  enable_k8s_app_deploy="$(grep -E '^ENABLE_K8S_APP_DEPLOY=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  enable_k8s_app_deploy="${enable_k8s_app_deploy,,}"
+  if [ -z "$enable_k8s_app_deploy" ]; then
+    enable_k8s_app_deploy="false"
+  fi
+  [ "$enable_k8s_app_deploy" = "true" ]
+}
+
 install_helm_if_missing() {
   if command -v helm >/dev/null 2>&1; then
     return
@@ -342,6 +352,59 @@ EOF
   return 0
 }
 
+deploy_k8s_app_for_monitoring_if_enabled() {
+  local kubeconfig_path
+  kubeconfig_path="${KUBECONFIG:-$K3S_KUBECONFIG}"
+
+  if ! is_monitoring_enabled; then
+    return 0
+  fi
+
+  if ! is_k8s_app_deploy_enabled; then
+    log "K8s app deploy is disabled (ENABLE_K8S_APP_DEPLOY=false). Monitoring dashboards for app metrics may stay empty."
+    return 0
+  fi
+
+  if ! ensure_k8s_ready; then
+    err "Kubernetes is not ready, cannot deploy app manifests for monitoring"
+    return 1
+  fi
+
+  log "Deploying Kubernetes app manifests (ENABLE_K8S_APP_DEPLOY=true)"
+  KUBECONFIG="$kubeconfig_path" kubectl apply -k "$APP_DIR/k8s"
+
+  if [ -f "$APP_DIR/k8s/backend-secret.yaml" ]; then
+    KUBECONFIG="$kubeconfig_path" kubectl apply -f "$APP_DIR/k8s/backend-secret.yaml"
+  else
+    err "Missing $APP_DIR/k8s/backend-secret.yaml (k8s backend may fail without secrets)"
+  fi
+
+  if [ -f "$APP_DIR/k8s/backend-configmap.prod.yaml" ]; then
+    KUBECONFIG="$kubeconfig_path" kubectl apply -f "$APP_DIR/k8s/backend-configmap.prod.yaml"
+  fi
+
+  if [ -f "$APP_DIR/k8s/ingress.prod.yaml" ]; then
+    KUBECONFIG="$kubeconfig_path" kubectl apply -f "$APP_DIR/k8s/ingress.prod.yaml"
+  fi
+}
+
+validate_monitoring_app_target() {
+  local kubeconfig_path
+  kubeconfig_path="${KUBECONFIG:-$K3S_KUBECONFIG}"
+
+  if ! KUBECONFIG="$kubeconfig_path" kubectl get ns remnawave >/dev/null 2>&1; then
+    err "Namespace remnawave not found in k8s. Prometheus cannot scrape backend app metrics."
+    return
+  fi
+
+  if ! KUBECONFIG="$kubeconfig_path" kubectl -n remnawave get svc backend >/dev/null 2>&1; then
+    err "Service remnawave/backend not found in k8s. Prometheus cannot scrape backend app metrics."
+    return
+  fi
+
+  log "Monitoring target check passed: remnawave/backend service exists"
+}
+
 install_monitoring_stack() {
   local render_script
   local values_file
@@ -382,6 +445,7 @@ install_monitoring_stack() {
   log "Applying project monitoring resources"
   KUBECONFIG="$kubeconfig_path" kubectl apply -k "$APP_DIR/k8s/monitoring"
 
+  validate_monitoring_app_target
   log "Monitoring stack is installed"
 }
 
@@ -1029,6 +1093,7 @@ run_deploy_flow() {
   read_domain_from_env
   if is_monitoring_enabled; then
     disable_k3s_traefik || true
+    deploy_k8s_app_for_monitoring_if_enabled || true
   fi
   get_active_color
   ensure_shared_db
