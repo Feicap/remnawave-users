@@ -17,7 +17,7 @@ set +a
 
 GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-${NGINX_SERVER_NAME:-}}"
 GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-${POSTGRES_PASSWORD:-}}"
-GRAFANA_TLS_SECRET="${GRAFANA_TLS_SECRET:-grafana-tls}"
+GRAFANA_NODEPORT="${GRAFANA_NODEPORT:-32000}"
 PROMETHEUS_RETENTION="${PROMETHEUS_RETENTION:-15d}"
 PROMETHEUS_STORAGE_SIZE="${PROMETHEUS_STORAGE_SIZE:-20Gi}"
 GRAFANA_STORAGE_SIZE="${GRAFANA_STORAGE_SIZE:-5Gi}"
@@ -40,15 +40,11 @@ mkdir -p "$(dirname "$OUT_FILE")"
 cat > "$OUT_FILE" <<EOF
 grafana:
   adminPassword: '$(yaml_sq_escape "$GRAFANA_ADMIN_PASSWORD")'
+  service:
+    type: NodePort
+    nodePort: $(yaml_sq_escape "$GRAFANA_NODEPORT")
   ingress:
-    enabled: true
-    ingressClassName: nginx
-    hosts:
-      - '$(yaml_sq_escape "$GRAFANA_DOMAIN")'
-    tls:
-      - secretName: '$(yaml_sq_escape "$GRAFANA_TLS_SECRET")'
-        hosts:
-          - '$(yaml_sq_escape "$GRAFANA_DOMAIN")'
+    enabled: false
   defaultDashboardsTimezone: utc
   sidecar:
     dashboards:

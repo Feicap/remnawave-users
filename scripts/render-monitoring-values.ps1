@@ -40,7 +40,7 @@ function Escape-YamlSingleQuoted {
 
 $grafanaDomain = Get-EnvValue -Map $envMap -Primary "GRAFANA_DOMAIN" -Fallback "NGINX_SERVER_NAME"
 $grafanaAdminPassword = Get-EnvValue -Map $envMap -Primary "GRAFANA_ADMIN_PASSWORD" -Fallback "POSTGRES_PASSWORD"
-$grafanaTlsSecret = Get-EnvValue -Map $envMap -Primary "GRAFANA_TLS_SECRET" -Default "grafana-tls"
+$grafanaNodePort = Get-EnvValue -Map $envMap -Primary "GRAFANA_NODEPORT" -Default "32000"
 $prometheusRetention = Get-EnvValue -Map $envMap -Primary "PROMETHEUS_RETENTION" -Default "15d"
 $prometheusStorageSize = Get-EnvValue -Map $envMap -Primary "PROMETHEUS_STORAGE_SIZE" -Default "20Gi"
 $grafanaStorageSize = Get-EnvValue -Map $envMap -Primary "GRAFANA_STORAGE_SIZE" -Default "5Gi"
@@ -53,9 +53,8 @@ if ([string]::IsNullOrWhiteSpace($grafanaAdminPassword)) {
   Write-Error "GRAFANA_ADMIN_PASSWORD is empty (set it or POSTGRES_PASSWORD in $EnvFile)"
 }
 
-$grafanaDomainEsc = Escape-YamlSingleQuoted $grafanaDomain
 $grafanaAdminPasswordEsc = Escape-YamlSingleQuoted $grafanaAdminPassword
-$grafanaTlsSecretEsc = Escape-YamlSingleQuoted $grafanaTlsSecret
+$grafanaNodePortEsc = Escape-YamlSingleQuoted $grafanaNodePort
 $prometheusRetentionEsc = Escape-YamlSingleQuoted $prometheusRetention
 $prometheusStorageSizeEsc = Escape-YamlSingleQuoted $prometheusStorageSize
 $grafanaStorageSizeEsc = Escape-YamlSingleQuoted $grafanaStorageSize
@@ -63,15 +62,11 @@ $grafanaStorageSizeEsc = Escape-YamlSingleQuoted $grafanaStorageSize
 $content = @"
 grafana:
   adminPassword: '$grafanaAdminPasswordEsc'
+  service:
+    type: NodePort
+    nodePort: $grafanaNodePortEsc
   ingress:
-    enabled: true
-    ingressClassName: nginx
-    hosts:
-      - '$grafanaDomainEsc'
-    tls:
-      - secretName: '$grafanaTlsSecretEsc'
-        hosts:
-          - '$grafanaDomainEsc'
+    enabled: false
   defaultDashboardsTimezone: utc
   sidecar:
     dashboards:

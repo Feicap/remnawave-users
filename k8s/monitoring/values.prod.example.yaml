@@ -1,14 +1,10 @@
 grafana:
   adminPassword: "change-me"
+  service:
+    type: NodePort
+    nodePort: 32000
   ingress:
-    enabled: true
-    ingressClassName: nginx
-    hosts:
-      - grafana.example.com
-    tls:
-      - secretName: grafana-tls
-        hosts:
-          - grafana.example.com
+    enabled: false
   defaultDashboardsTimezone: utc
   sidecar:
     dashboards:

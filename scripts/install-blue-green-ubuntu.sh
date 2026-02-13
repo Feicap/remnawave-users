@@ -533,17 +533,27 @@ ensure_shared_db() {
 }
 
 read_domain_from_env() {
-  DOMAIN="$(grep -E '^NGINX_SERVER_NAME=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  DOMAIN="$(grep -E '^NGINX_SERVER_NAME=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
   if [ -z "$DOMAIN" ]; then
     DOMAIN="jobrhyme.raspberryip.com"
   fi
-  ENABLE_HTTPS="$(grep -E '^ENABLE_HTTPS=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
-  LETSENCRYPT_EMAIL="$(grep -E '^LETSENCRYPT_EMAIL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  ENABLE_HTTPS="$(grep -E '^ENABLE_HTTPS=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  LETSENCRYPT_EMAIL="$(grep -E '^LETSENCRYPT_EMAIL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  GRAFANA_DOMAIN="$(grep -E '^GRAFANA_DOMAIN=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  GRAFANA_NODEPORT="$(grep -E '^GRAFANA_NODEPORT=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  if [ -z "$GRAFANA_DOMAIN" ]; then
+    GRAFANA_DOMAIN="grafana.${DOMAIN}"
+  fi
+  if [ -z "$GRAFANA_NODEPORT" ]; then
+    GRAFANA_NODEPORT="32000"
+  fi
   ENABLE_HTTPS="${ENABLE_HTTPS,,}"
   if [ -z "$ENABLE_HTTPS" ]; then
     ENABLE_HTTPS="false"
   fi
   export DOMAIN
+  export GRAFANA_DOMAIN
+  export GRAFANA_NODEPORT
   export ENABLE_HTTPS
   export LETSENCRYPT_EMAIL
 }
@@ -720,6 +730,30 @@ server {
     }
 }
 EOF
+
+  if [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ]; then
+    sudo tee -a "$conf_path" >/dev/null <<EOF
+
+server {
+    listen 80;
+    server_name ${GRAFANA_DOMAIN};
+    client_max_body_size 15m;
+
+    location /.well-known/acme-challenge/ {
+        root ${CERTBOT_WEBROOT};
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:${GRAFANA_NODEPORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+  fi
 }
 
 write_nginx_https_config() {
@@ -774,6 +808,50 @@ server {
     }
 }
 EOF
+
+  if [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ]; then
+    local grafana_cert_dir="/etc/letsencrypt/live/${GRAFANA_DOMAIN}"
+    sudo tee -a "$conf_path" >/dev/null <<EOF
+
+server {
+    listen 80;
+    server_name ${GRAFANA_DOMAIN};
+    client_max_body_size 15m;
+
+    location /.well-known/acme-challenge/ {
+        root ${CERTBOT_WEBROOT};
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${GRAFANA_DOMAIN};
+    client_max_body_size 15m;
+
+    ssl_certificate ${grafana_cert_dir}/fullchain.pem;
+    ssl_certificate_key ${grafana_cert_dir}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:${GRAFANA_NODEPORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+  fi
 }
 
 reload_nginx_with_site() {
@@ -784,7 +862,8 @@ reload_nginx_with_site() {
   sudo systemctl reload nginx
 }
 
-obtain_letsencrypt_cert() {
+obtain_letsencrypt_cert_for_domain() {
+  local domain="$1"
   if [ "$ENABLE_HTTPS" != "true" ]; then
     log "HTTPS disabled (ENABLE_HTTPS=$ENABLE_HTTPS)"
     return
@@ -796,14 +875,14 @@ obtain_letsencrypt_cert() {
   fi
 
   sudo mkdir -p "$CERTBOT_WEBROOT/.well-known/acme-challenge"
-  if [ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]; then
-    log "Let's Encrypt certificate already exists for ${DOMAIN}"
+  if [ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${domain}/privkey.pem" ]; then
+    log "Let's Encrypt certificate already exists for ${domain}"
     return
   fi
 
-  log "Requesting Let's Encrypt certificate for ${DOMAIN}"
+  log "Requesting Let's Encrypt certificate for ${domain}"
   sudo certbot certonly --webroot -w "$CERTBOT_WEBROOT" \
-    -d "$DOMAIN" \
+    -d "$domain" \
     --email "$LETSENCRYPT_EMAIL" \
     --agree-tos --non-interactive --keep-until-expiring
 }
@@ -811,7 +890,10 @@ obtain_letsencrypt_cert() {
 switch_nginx() {
   write_nginx_http_config
   reload_nginx_with_site
-  obtain_letsencrypt_cert
+  obtain_letsencrypt_cert_for_domain "$DOMAIN"
+  if [ -n "$GRAFANA_DOMAIN" ] && [ "$GRAFANA_DOMAIN" != "$DOMAIN" ]; then
+    obtain_letsencrypt_cert_for_domain "$GRAFANA_DOMAIN"
+  fi
   if [ "$ENABLE_HTTPS" = "true" ] && [ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]; then
     write_nginx_https_config
     reload_nginx_with_site

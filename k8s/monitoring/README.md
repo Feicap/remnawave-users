@@ -44,8 +44,9 @@ In Prometheus UI (`Status -> Targets`), target `backend` should be `UP`.
 
 ## 4) Open Grafana
 
-If ingress is configured in `values.prod.yaml`, open:
-- `https://grafana.<your-domain>`
+Default in this repo: Grafana ingress is disabled, service is exposed as `NodePort`.
+External access is expected via host nginx reverse proxy (configured by deploy script) on:
+- `https://<GRAFANA_DOMAIN>`
 
 If ingress is not configured, use port-forward:
 
