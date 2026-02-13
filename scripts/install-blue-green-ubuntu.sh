@@ -6,6 +6,7 @@ APP_DIR="${APP_DIR:-/opt/remnawave-users}"
 ACTIVE_FILE="$APP_DIR/.active_color"
 EXTERNAL_ENV_SOURCE="/opt/.env"
 COMPOSE_FILE="$APP_DIR/docker-compose.deploy.yml"
+CERTBOT_WEBROOT="/var/www/certbot"
 
 BLUE_BACKEND_PORT=18080
 BLUE_FRONTEND_PORT=18081
@@ -38,7 +39,7 @@ require_sudo() {
 
 install_base_packages() {
   sudo apt update
-  sudo apt install -y ca-certificates curl gnupg git nginx ufw
+  sudo apt install -y ca-certificates curl gnupg git nginx ufw certbot
 }
 
 install_docker_if_missing() {
@@ -115,8 +116,11 @@ prepare_env_files() {
   local db_url
   local ssl_require
   local db_password
+  local enable_https_raw
   db_url="$(grep -E '^DATABASE_URL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
   ssl_require="$(grep -E '^DJANGO_DB_SSL_REQUIRE=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  enable_https_raw="$(grep -E '^ENABLE_HTTPS=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  enable_https_raw="${enable_https_raw,,}"
   db_password=""
 
   if [[ "$db_url" =~ ^postgres(ql)?://[^:]+:([^@]+)@ ]]; then
@@ -141,6 +145,40 @@ prepare_env_files() {
     log "Set DJANGO_DB_SSL_REQUIRE=False for local docker postgres"
   fi
 
+  if [ "$enable_https_raw" = "true" ]; then
+    if grep -qE '^DJANGO_SECURE_SSL_REDIRECT=' "$APP_DIR/.env.prod"; then
+      sed -i 's/^DJANGO_SECURE_SSL_REDIRECT=.*/DJANGO_SECURE_SSL_REDIRECT=True/' "$APP_DIR/.env.prod"
+    else
+      echo "DJANGO_SECURE_SSL_REDIRECT=True" >> "$APP_DIR/.env.prod"
+    fi
+    if grep -qE '^DJANGO_SESSION_COOKIE_SECURE=' "$APP_DIR/.env.prod"; then
+      sed -i 's/^DJANGO_SESSION_COOKIE_SECURE=.*/DJANGO_SESSION_COOKIE_SECURE=True/' "$APP_DIR/.env.prod"
+    else
+      echo "DJANGO_SESSION_COOKIE_SECURE=True" >> "$APP_DIR/.env.prod"
+    fi
+    if grep -qE '^DJANGO_CSRF_COOKIE_SECURE=' "$APP_DIR/.env.prod"; then
+      sed -i 's/^DJANGO_CSRF_COOKIE_SECURE=.*/DJANGO_CSRF_COOKIE_SECURE=True/' "$APP_DIR/.env.prod"
+    else
+      echo "DJANGO_CSRF_COOKIE_SECURE=True" >> "$APP_DIR/.env.prod"
+    fi
+  else
+    if grep -qE '^DJANGO_SECURE_SSL_REDIRECT=' "$APP_DIR/.env.prod"; then
+      sed -i 's/^DJANGO_SECURE_SSL_REDIRECT=.*/DJANGO_SECURE_SSL_REDIRECT=False/' "$APP_DIR/.env.prod"
+    else
+      echo "DJANGO_SECURE_SSL_REDIRECT=False" >> "$APP_DIR/.env.prod"
+    fi
+    if grep -qE '^DJANGO_SESSION_COOKIE_SECURE=' "$APP_DIR/.env.prod"; then
+      sed -i 's/^DJANGO_SESSION_COOKIE_SECURE=.*/DJANGO_SESSION_COOKIE_SECURE=False/' "$APP_DIR/.env.prod"
+    else
+      echo "DJANGO_SESSION_COOKIE_SECURE=False" >> "$APP_DIR/.env.prod"
+    fi
+    if grep -qE '^DJANGO_CSRF_COOKIE_SECURE=' "$APP_DIR/.env.prod"; then
+      sed -i 's/^DJANGO_CSRF_COOKIE_SECURE=.*/DJANGO_CSRF_COOKIE_SECURE=False/' "$APP_DIR/.env.prod"
+    else
+      echo "DJANGO_CSRF_COOKIE_SECURE=False" >> "$APP_DIR/.env.prod"
+    fi
+  fi
+
   cp "$APP_DIR/.env.prod" "$APP_DIR/backend/.env"
   log "Updated backend/.env from .env.prod"
 }
@@ -150,7 +188,15 @@ read_domain_from_env() {
   if [ -z "$DOMAIN" ]; then
     DOMAIN="jobrhyme.raspberryip.com"
   fi
+  ENABLE_HTTPS="$(grep -E '^ENABLE_HTTPS=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  LETSENCRYPT_EMAIL="$(grep -E '^LETSENCRYPT_EMAIL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
+  ENABLE_HTTPS="${ENABLE_HTTPS,,}"
+  if [ -z "$ENABLE_HTTPS" ]; then
+    ENABLE_HTTPS="false"
+  fi
   export DOMAIN
+  export ENABLE_HTTPS
+  export LETSENCRYPT_EMAIL
 }
 
 get_active_color() {
@@ -267,13 +313,17 @@ health_check_target() {
   fi
 }
 
-switch_nginx() {
+write_nginx_http_config() {
   local conf_path="/etc/nginx/sites-available/remnawave"
 
   sudo tee "$conf_path" >/dev/null <<EOF
 server {
     listen 80;
     server_name ${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root ${CERTBOT_WEBROOT};
+    }
 
     location /api/ {
         proxy_pass http://127.0.0.1:${TARGET_BACKEND_PORT};
@@ -294,11 +344,100 @@ server {
     }
 }
 EOF
+}
 
+write_nginx_https_config() {
+  local conf_path="/etc/nginx/sites-available/remnawave"
+  local cert_dir="/etc/letsencrypt/live/${DOMAIN}"
+
+  sudo tee "$conf_path" >/dev/null <<EOF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root ${CERTBOT_WEBROOT};
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN};
+
+    ssl_certificate ${cert_dir}/fullchain.pem;
+    ssl_certificate_key ${cert_dir}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:${TARGET_BACKEND_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:${TARGET_FRONTEND_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+}
+
+reload_nginx_with_site() {
+  local conf_path="/etc/nginx/sites-available/remnawave"
   sudo ln -sf "$conf_path" /etc/nginx/sites-enabled/remnawave
   sudo rm -f /etc/nginx/sites-enabled/default
   sudo nginx -t
   sudo systemctl reload nginx
+}
+
+obtain_letsencrypt_cert() {
+  if [ "$ENABLE_HTTPS" != "true" ]; then
+    log "HTTPS disabled (ENABLE_HTTPS=$ENABLE_HTTPS)"
+    return
+  fi
+
+  if [ -z "$LETSENCRYPT_EMAIL" ]; then
+    err "ENABLE_HTTPS=true but LETSENCRYPT_EMAIL is empty"
+    return
+  fi
+
+  sudo mkdir -p "$CERTBOT_WEBROOT/.well-known/acme-challenge"
+  if [ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]; then
+    log "Let's Encrypt certificate already exists for ${DOMAIN}"
+    return
+  fi
+
+  log "Requesting Let's Encrypt certificate for ${DOMAIN}"
+  sudo certbot certonly --webroot -w "$CERTBOT_WEBROOT" \
+    -d "$DOMAIN" \
+    --email "$LETSENCRYPT_EMAIL" \
+    --agree-tos --non-interactive --keep-until-expiring
+}
+
+switch_nginx() {
+  write_nginx_http_config
+  reload_nginx_with_site
+  obtain_letsencrypt_cert
+  if [ "$ENABLE_HTTPS" = "true" ] && [ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${DOMAIN}/privkey.pem" ]; then
+    write_nginx_https_config
+    reload_nginx_with_site
+  fi
 
   echo "$TARGET_COLOR" > "$ACTIVE_FILE"
   log "Traffic switched to ${TARGET_COLOR}"
