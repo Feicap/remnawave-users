@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import type { TelegramUser } from '../types/telegram'
 import type { PaymentProof, PaymentProofUser, PaymentStatus } from '../types/payment'
@@ -27,6 +27,8 @@ export default function AdminCheck() {
   const [proofs, setProofs] = useState<PaymentProof[]>([])
   const [error, setError] = useState('')
   const [isUpdating, setIsUpdating] = useState(false)
+  const [imageUrls, setImageUrls] = useState<Record<number, string>>({})
+  const imageBlobUrlsRef = useRef<string[]>([])
 
   const isAdmin = useMemo(() => (user ? isAdminUserId(user.id) : false), [user])
 
@@ -85,21 +87,71 @@ export default function AdminCheck() {
     })
   }, [loadProofs])
 
+  useEffect(() => {
+    if (!user || proofs.length === 0) {
+      setImageUrls({})
+      return
+    }
+    const authUser = user as TelegramUser
+
+    let cancelled = false
+    const controllers: AbortController[] = []
+
+    async function loadImages() {
+      const next: Record<number, string> = {}
+      for (const proof of proofs) {
+        const controller = new AbortController()
+        controllers.push(controller)
+        const res = await fetch(proof.file_url, {
+          headers: buildAuthHeaders(authUser),
+          signal: controller.signal,
+        })
+        if (!res.ok) {
+          continue
+        }
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        imageBlobUrlsRef.current.push(url)
+        next[proof.id] = url
+      }
+
+      if (!cancelled) {
+        setImageUrls(next)
+      }
+    }
+
+    loadImages().catch(() => {
+      // Ignore image loading errors.
+    })
+
+    return () => {
+      cancelled = true
+      for (const c of controllers) {
+        c.abort()
+      }
+      for (const url of imageBlobUrlsRef.current) {
+        URL.revokeObjectURL(url)
+      }
+      imageBlobUrlsRef.current = []
+    }
+  }, [proofs, user])
+
   if (!user || !isAdmin) {
     return <div>Loading...</div>
   }
 
-  async function updateStatus(proofId: number, status: Exclude<PaymentStatus, 'pending'>) {
+  async function updateStatus(proofId: number, status: PaymentStatus) {
     if (!user) {
       return
     }
+    const authUser = user as TelegramUser
     setIsUpdating(true)
     setError('')
     try {
       const res = await fetch(`/api/admin/payment-proofs/${proofId}/`, {
         method: 'PATCH',
         headers: {
-          ...buildAuthHeaders(user),
+          ...buildAuthHeaders(authUser),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ status }),
@@ -139,9 +191,32 @@ export default function AdminCheck() {
             <span className="material-symbols-outlined text-primary text-3xl">shield</span>
             <span className="text-xl font-bold text-gray-900 dark:text-white">Мой VPS</span>
           </div>
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-3 px-3 py-2">
+              <div
+                className="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10"
+                style={{
+                  backgroundImage: `url("${user.photo || 'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfTQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'}")`,
+                }}
+              />
+              <div className="flex flex-col">
+                <h1 className="text-gray-900 dark:text-white text-base font-medium leading-normal">
+                  {user.username || 'Администратор'}
+                </h1>
+                <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">ID: {user.id}</p>
+              </div>
+            </div>
+          </div>
           <div className="flex flex-col gap-2">
             <button
               onClick={handleBackToAdmin}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"
+              type="button"
+            >
+              <span className="material-symbols-outlined text-gray-500 dark:text-white">admin_panel_settings</span>
+              <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Админ панель</p>
+            </button>
+            <button
               className="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 dark:bg-[#232f48] text-left"
               type="button"
             >
@@ -208,7 +283,15 @@ export default function AdminCheck() {
                   const badge = statusBadge(proof.status)
                   return (
                     <div key={proof.id} className="rounded-xl border border-gray-200 dark:border-[#324467] p-4 bg-gray-50 dark:bg-[#1a2539]">
-                      <img alt={`proof-${proof.id}`} className="w-full max-h-96 object-contain rounded-lg mb-3" src={proof.file_url} />
+                        {!imageUrls[proof.id] ? (
+                          <div className="w-full h-56 rounded-lg mb-3 bg-gray-200/40 dark:bg-[#0f172a] animate-pulse" />
+                        ) : (
+                          <img
+                            alt={`proof-${proof.id}`}
+                            className="w-full max-h-96 object-contain rounded-lg mb-3"
+                            src={imageUrls[proof.id]}
+                          />
+                        )}
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
                           <p className="text-sm text-gray-900 dark:text-white">Отправлено: {new Date(proof.created_at).toLocaleString('ru-RU')}</p>
@@ -216,28 +299,35 @@ export default function AdminCheck() {
                             {badge.label}
                           </span>
                         </div>
-                        {proof.status === 'pending' ? (
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => updateStatus(proof.id, 'approved')}
-                              className="flex h-9 items-center gap-1 rounded-md bg-green-500/20 px-3 text-sm font-medium text-green-500 hover:bg-green-500/30 disabled:opacity-60"
-                              disabled={isUpdating}
-                              type="button"
-                            >
-                              <span className="material-symbols-outlined text-base">check_circle</span>
-                              <span>Подтвердить</span>
-                            </button>
-                            <button
-                              onClick={() => updateStatus(proof.id, 'rejected')}
-                              className="flex h-9 items-center gap-1 rounded-md bg-red-500/20 px-3 text-sm font-medium text-red-500 hover:bg-red-500/30 disabled:opacity-60"
-                              disabled={isUpdating}
-                              type="button"
-                            >
-                              <span className="material-symbols-outlined text-base">cancel</span>
-                              <span>Отклонить</span>
-                            </button>
-                          </div>
-                        ) : null}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => updateStatus(proof.id, 'approved')}
+                            className="flex h-9 items-center gap-1 rounded-md bg-green-500/20 px-3 text-sm font-medium text-green-500 hover:bg-green-500/30 disabled:opacity-60"
+                            disabled={isUpdating || proof.status === 'approved'}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-base">check_circle</span>
+                            <span>Подтвердить</span>
+                          </button>
+                          <button
+                            onClick={() => updateStatus(proof.id, 'rejected')}
+                            className="flex h-9 items-center gap-1 rounded-md bg-red-500/20 px-3 text-sm font-medium text-red-500 hover:bg-red-500/30 disabled:opacity-60"
+                            disabled={isUpdating || proof.status === 'rejected'}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-base">cancel</span>
+                            <span>Отклонить</span>
+                          </button>
+                          <button
+                            onClick={() => updateStatus(proof.id, 'pending')}
+                            className="flex h-9 items-center gap-1 rounded-md bg-gray-500/20 px-3 text-sm font-medium text-gray-500 hover:bg-gray-500/30 disabled:opacity-60"
+                            disabled={isUpdating || proof.status === 'pending'}
+                            type="button"
+                          >
+                            <span className="material-symbols-outlined text-base">schedule</span>
+                            <span>Ожидание</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )

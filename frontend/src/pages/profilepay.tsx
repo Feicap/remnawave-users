@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import type { TelegramUser } from '../types/telegram'
 import type { PaymentProof } from '../types/payment'
@@ -26,6 +26,8 @@ export default function ProfilePay() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [error, setError] = useState('')
+  const [imageUrls, setImageUrls] = useState<Record<number, string>>({})
+  const imageBlobUrlsRef = useRef<string[]>([])
 
   const canViewAdminPanel = useMemo(() => (user ? isAdminUserId(user.id) : false), [user])
 
@@ -59,6 +61,54 @@ export default function ProfilePay() {
     return () => clearInterval(intervalId)
   }, [navigate, user, loadMyProofs])
 
+  useEffect(() => {
+    if (!user || items.length === 0) {
+      setImageUrls({})
+      return
+    }
+    const authUser = user as TelegramUser
+
+    let cancelled = false
+    const controllers: AbortController[] = []
+
+    async function loadImages() {
+      const next: Record<number, string> = {}
+      for (const item of items) {
+        const controller = new AbortController()
+        controllers.push(controller)
+        const res = await fetch(item.file_url, {
+          headers: buildAuthHeaders(authUser),
+          signal: controller.signal,
+        })
+        if (!res.ok) {
+          continue
+        }
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        imageBlobUrlsRef.current.push(url)
+        next[item.id] = url
+      }
+      if (!cancelled) {
+        setImageUrls(next)
+      }
+    }
+
+    loadImages().catch(() => {
+      // Silent fail for missing images.
+    })
+
+    return () => {
+      cancelled = true
+      for (const c of controllers) {
+        c.abort()
+      }
+      for (const url of imageBlobUrlsRef.current) {
+        URL.revokeObjectURL(url)
+      }
+      imageBlobUrlsRef.current = []
+    }
+  }, [items, user])
+
   if (!user) {
     return <div>Loading...</div>
   }
@@ -68,6 +118,7 @@ export default function ProfilePay() {
     if (!user) {
       return
     }
+    const authUser = user as TelegramUser
     if (!selectedFile) {
       setError('Выберите файл перед отправкой')
       return
@@ -80,7 +131,7 @@ export default function ProfilePay() {
       formData.append('file', selectedFile)
       const res = await fetch('/api/payment-proofs/', {
         method: 'POST',
-        headers: buildAuthHeaders(user),
+        headers: buildAuthHeaders(authUser),
         body: formData,
       })
 
@@ -211,7 +262,15 @@ export default function ProfilePay() {
                   return (
                     <div key={item.id} className="flex items-start gap-3 justify-end">
                       <div className="max-w-[75%] rounded-xl border border-gray-200 dark:border-[#324467] p-3 bg-gray-50 dark:bg-[#1a2539]">
-                        <img alt={`proof-${item.id}`} className="w-full max-h-80 object-contain rounded-lg mb-2" src={item.file_url} />
+                        {!imageUrls[item.id] ? (
+                          <div className="w-full h-48 rounded-lg mb-2 bg-gray-200/40 dark:bg-[#0f172a] animate-pulse" />
+                        ) : (
+                          <img
+                            alt={`proof-${item.id}`}
+                            className="w-full max-h-80 object-contain rounded-lg mb-2"
+                            src={imageUrls[item.id]}
+                          />
+                        )}
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-xs text-gray-500 dark:text-[#92a4c9]">
                             {new Date(item.created_at).toLocaleString('ru-RU')}

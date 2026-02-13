@@ -6,6 +6,7 @@ from pathlib import Path
 from time import time
 
 from django.http import FileResponse, HttpRequest, JsonResponse
+from django.db.models import Count, Max, Q
 from django.views.decorators.csrf import csrf_exempt
 
 from .models import PaymentProof
@@ -156,23 +157,22 @@ def admin_payment_proof_users(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Invalid method"}, status=405)
 
     rows = (
-        PaymentProof.objects.order_by("-created_at")
-        .values("user_id", "username")
-        .distinct()
+        PaymentProof.objects.values("user_id")
+        .annotate(
+            username=Max("username"),
+            last_created=Max("created_at"),
+            pending_count=Count("id", filter=Q(status=PaymentProof.STATUS_PENDING)),
+        )
+        .order_by("-last_created")
     )
-    pending_counts = {}
-    for row in PaymentProof.objects.filter(status=PaymentProof.STATUS_PENDING).values("user_id"):
-        row_user_id = row["user_id"]
-        pending_counts[row_user_id] = pending_counts.get(row_user_id, 0) + 1
 
     items = []
     for row in rows:
-        row_user_id = row["user_id"]
         items.append(
             {
-                "user_id": row_user_id,
+                "user_id": row["user_id"],
                 "username": row.get("username") or "",
-                "pending_count": pending_counts.get(row_user_id, 0),
+                "pending_count": row.get("pending_count", 0),
             }
         )
 
@@ -217,7 +217,11 @@ def admin_update_payment_proof(request: HttpRequest, proof_id: int) -> JsonRespo
         return JsonResponse({"error": "Invalid JSON"}, status=400)
 
     status = payload.get("status", "")
-    if status not in {PaymentProof.STATUS_APPROVED, PaymentProof.STATUS_REJECTED}:
+    if status not in {
+        PaymentProof.STATUS_PENDING,
+        PaymentProof.STATUS_APPROVED,
+        PaymentProof.STATUS_REJECTED,
+    }:
         return JsonResponse({"error": "Invalid status"}, status=400)
 
     try:
