@@ -341,42 +341,42 @@ export default function AdminCheck() {
                             {badge.label}
                           </span>
                         </div>
-                        <div className="flex flex-wrap items-stretch gap-2 sm:items-center">
+                        <div className="flex flex-wrap items-center gap-2">
                           <button
                             onClick={() => updateStatus(proof.id, 'approved')}
-                            className="flex h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-md bg-green-500/20 px-3 text-sm font-medium text-green-500 hover:bg-green-500/30 disabled:opacity-60 sm:w-auto sm:flex-none"
+                            className="flex h-9 w-9 items-center justify-center rounded-md bg-green-500/20 text-sm font-medium text-green-500 hover:bg-green-500/30 disabled:opacity-60 sm:w-auto sm:gap-1 sm:px-3"
                             disabled={isUpdating || proof.status === 'approved'}
                             type="button"
                           >
                             <span className="material-symbols-outlined text-base">check_circle</span>
-                            <span>Подтвердить</span>
+                            <span className="hidden sm:inline">Подтвердить</span>
                           </button>
                           <button
                             onClick={() => updateStatus(proof.id, 'rejected')}
-                            className="flex h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-md bg-red-500/20 px-3 text-sm font-medium text-red-500 hover:bg-red-500/30 disabled:opacity-60 sm:w-auto sm:flex-none"
+                            className="flex h-9 w-9 items-center justify-center rounded-md bg-red-500/20 text-sm font-medium text-red-500 hover:bg-red-500/30 disabled:opacity-60 sm:w-auto sm:gap-1 sm:px-3"
                             disabled={isUpdating || proof.status === 'rejected'}
                             type="button"
                           >
                             <span className="material-symbols-outlined text-base">cancel</span>
-                            <span>Отклонить</span>
+                            <span className="hidden sm:inline">Отклонить</span>
                           </button>
                           <button
                             onClick={() => updateStatus(proof.id, 'pending')}
-                            className="flex h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-md bg-gray-500/20 px-3 text-sm font-medium text-gray-500 hover:bg-gray-500/30 disabled:opacity-60 sm:w-auto sm:flex-none"
+                            className="flex h-9 w-9 items-center justify-center rounded-md bg-gray-500/20 text-sm font-medium text-gray-500 hover:bg-gray-500/30 disabled:opacity-60 sm:w-auto sm:gap-1 sm:px-3"
                             disabled={isUpdating || proof.status === 'pending'}
                             type="button"
                           >
                             <span className="material-symbols-outlined text-base">schedule</span>
-                            <span>Ожидание</span>
+                            <span className="hidden sm:inline">Ожидание</span>
                           </button>
                           <button
                             onClick={() => deleteProof(proof.id)}
-                            className="flex h-9 min-w-0 flex-1 items-center justify-center gap-1 rounded-md bg-red-600/20 px-3 text-sm font-medium text-red-600 hover:bg-red-600/30 disabled:opacity-60 sm:w-auto sm:flex-none"
+                            className="flex h-9 w-9 items-center justify-center rounded-md bg-red-600/20 text-sm font-medium text-red-600 hover:bg-red-600/30 disabled:opacity-60 sm:w-auto sm:gap-1 sm:px-3"
                             disabled={isUpdating}
                             type="button"
                           >
                             <span className="material-symbols-outlined text-base">delete</span>
-                            <span>Удалить</span>
+                            <span className="hidden sm:inline">Удалить</span>
                           </button>
                         </div>
                       </div>
