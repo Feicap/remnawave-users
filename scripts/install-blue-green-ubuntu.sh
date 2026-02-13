@@ -535,7 +535,8 @@ ensure_shared_db() {
 read_domain_from_env() {
   DOMAIN="$(grep -E '^NGINX_SERVER_NAME=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
   if [ -z "$DOMAIN" ]; then
-    DOMAIN="jobrhyme.raspberryip.com"
+    err "NGINX_SERVER_NAME is empty in $APP_DIR/.env.prod"
+    exit 1
   fi
   ENABLE_HTTPS="$(grep -E '^ENABLE_HTTPS=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
   LETSENCRYPT_EMAIL="$(grep -E '^LETSENCRYPT_EMAIL=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"

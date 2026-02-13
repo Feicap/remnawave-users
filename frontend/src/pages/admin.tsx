@@ -8,7 +8,7 @@ interface AuthenticatedUser extends TelegramUser {
   token: string
 }
 
-const GRAFANA_URL = 'https://grafanaz.ftp.sh'
+const GRAFANA_URL = String(import.meta.env.VITE_GRAFANA_URL ?? '').trim()
 
 const ADMIN_ROWS = [
   { id: '@john_doe', plan: 'Премиум (месяц)', status: 'Активен', end: '2026-03-31', statusColor: 'text-green-500 bg-green-500/10' },
@@ -87,15 +87,17 @@ export default function Admin() {
                 <span className="material-symbols-outlined text-gray-500 dark:text-white">credit_card</span>
                 <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Проверка оплаты</p>
               </button>
-              <a
-                href={GRAFANA_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50"
-              >
-                <span className="material-symbols-outlined text-gray-500 dark:text-white">monitoring</span>
-                <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Grafana</p>
-              </a>
+              {GRAFANA_URL ? (
+                <a
+                  href={GRAFANA_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50"
+                >
+                  <span className="material-symbols-outlined text-gray-500 dark:text-white">monitoring</span>
+                  <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Grafana</p>
+                </a>
+              ) : null}
               <button
                 onClick={handleBackToProfile}
                 className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"

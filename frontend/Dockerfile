@@ -10,10 +10,12 @@ COPY . .
 ARG VITE_TELEGRAM_BOT_NAME=
 ARG VITE_API_URL=
 ARG VITE_ADMIN=
+ARG VITE_GRAFANA_URL=
 RUN if [ -f .env ]; then export $(grep -v '^#' .env | xargs); fi \
     && if [ -n "$VITE_TELEGRAM_BOT_NAME" ]; then export VITE_TELEGRAM_BOT_NAME="$VITE_TELEGRAM_BOT_NAME"; fi \
     && if [ -n "$VITE_API_URL" ]; then export VITE_API_URL="$VITE_API_URL"; fi \
     && if [ -n "$VITE_ADMIN" ]; then export VITE_ADMIN="$VITE_ADMIN"; fi \
+    && if [ -n "$VITE_GRAFANA_URL" ]; then export VITE_GRAFANA_URL="$VITE_GRAFANA_URL"; fi \
     && npm run build
 
 FROM nginx:1.27-alpine
