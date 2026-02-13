@@ -182,6 +182,16 @@ install_base_packages() {
   sudo apt install -y ca-certificates curl gnupg git nginx ufw certbot
 }
 
+is_monitoring_enabled() {
+  local enable_monitoring
+  enable_monitoring="$(grep -E '^ENABLE_MONITORING=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- | tr -d '\r' || true)"
+  enable_monitoring="${enable_monitoring,,}"
+  if [ -z "$enable_monitoring" ]; then
+    enable_monitoring="true"
+  fi
+  [ "$enable_monitoring" = "true" ]
+}
+
 install_helm_if_missing() {
   if command -v helm >/dev/null 2>&1; then
     return
@@ -282,19 +292,62 @@ ensure_k8s_ready() {
   return 1
 }
 
+disable_k3s_traefik() {
+  local k3s_cfg="/etc/rancher/k3s/config.yaml"
+  local i
+
+  if ! ensure_k8s_ready; then
+    log "Kubernetes is not ready, skipping k3s Traefik disable step"
+    return 1
+  fi
+
+  sudo mkdir -p /etc/rancher/k3s
+  if [ ! -f "$k3s_cfg" ]; then
+    sudo tee "$k3s_cfg" >/dev/null <<EOF
+disable:
+  - traefik
+EOF
+  elif ! grep -Eq '^[[:space:]]*-[[:space:]]*traefik[[:space:]]*$' "$k3s_cfg"; then
+    if grep -Eq '^[[:space:]]*disable:[[:space:]]*$' "$k3s_cfg"; then
+      echo "  - traefik" | sudo tee -a "$k3s_cfg" >/dev/null
+    else
+      sudo tee -a "$k3s_cfg" >/dev/null <<EOF
+
+disable:
+  - traefik
+EOF
+    fi
+  fi
+
+  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q '^k3s\.service'; then
+    log "Restarting k3s to enforce Traefik disable"
+    sudo systemctl restart k3s
+  fi
+
+  set_kubeconfig_from_k3s_if_present
+  for i in $(seq 1 90); do
+    if kubectl get nodes >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+
+  kubectl -n kube-system delete helmchart traefik --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n kube-system delete helmchart traefik-crd --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n kube-system get ds -o name 2>/dev/null | grep 'svclb-traefik' | xargs -r kubectl -n kube-system delete >/dev/null 2>&1 || true
+  kubectl -n kube-system get pods -o name 2>/dev/null | grep 'svclb-traefik' | xargs -r kubectl -n kube-system delete >/dev/null 2>&1 || true
+  kubectl -n kube-system delete svc traefik --ignore-not-found >/dev/null 2>&1 || true
+
+  log "k3s Traefik disable step completed"
+  return 0
+}
+
 install_monitoring_stack() {
-  local enable_monitoring
   local render_script
   local values_file
 
-  enable_monitoring="$(grep -E '^ENABLE_MONITORING=' "$APP_DIR/.env.prod" | tail -n1 | cut -d '=' -f2- || true)"
-  enable_monitoring="${enable_monitoring,,}"
-  if [ -z "$enable_monitoring" ]; then
-    enable_monitoring="true"
-  fi
-
-  if [ "$enable_monitoring" != "true" ]; then
-    log "Monitoring installation disabled by ENABLE_MONITORING=$enable_monitoring"
+  if ! is_monitoring_enabled; then
+    log "Monitoring installation disabled by ENABLE_MONITORING"
     return
   fi
 
@@ -974,6 +1027,9 @@ run_deploy_flow() {
 
   prepare_env_files
   read_domain_from_env
+  if is_monitoring_enabled; then
+    disable_k3s_traefik || true
+  fi
   get_active_color
   ensure_shared_db
   set_target_color "$requested_color"

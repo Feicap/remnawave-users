@@ -79,6 +79,7 @@ curl -fsSL https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts
 Инсталлятор автоматически устанавливает Grafana/Prometheus (kube-prometheus-stack).
 Если `kubectl` недоступен, он пытается установить `k3s` и продолжает установку мониторинга.
 `KUBECONFIG` для k3s подхватывается автоматически (`/etc/rancher/k3s/k3s.yaml`).
+При включённом мониторинге скрипт автоматически отключает встроенный `k3s` Traefik, чтобы он не перехватывал порты `80/443`.
 Отключение: `ENABLE_MONITORING=false` в `.env.prod`.
 Отключить автоустановку k3s: `ENABLE_K3S_AUTO_INSTALL=false` в `.env.prod`.
 
