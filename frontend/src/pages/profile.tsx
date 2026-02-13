@@ -11,10 +11,27 @@ interface AuthenticatedUser extends TelegramUser {
 export default function Profile() {
   const navigate = useNavigate()
   const [user, setUser] = useState<AuthenticatedUser | null>(null)
-  const expiresAt = new Date('2026-03-05T13:33:00')
+  const initialExpiry = new Date('2026-03-05T13:33:00')
   const now = new Date()
   const msInDay = 24 * 60 * 60 * 1000
+  const renewPeriodDays = 30
+  const renewPeriodMs = renewPeriodDays * msInDay
+
+  let expiresAt = initialExpiry
+  if (now.getTime() > initialExpiry.getTime()) {
+    const elapsedMs = now.getTime() - initialExpiry.getTime()
+    const periodsPassed = Math.floor(elapsedMs / renewPeriodMs) + 1
+    expiresAt = new Date(initialExpiry.getTime() + periodsPassed * renewPeriodMs)
+  }
+
   const daysLeft = Math.max(0, Math.ceil((expiresAt.getTime() - now.getTime()) / msInDay))
+  const expiresAtFormatted = expiresAt.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 
   useEffect(() => {
     const stored = localStorage.getItem('tg_user')
@@ -130,7 +147,7 @@ export default function Profile() {
 </div>
 <div className="flex flex-col gap-2 rounded-xl p-6 bg-white dark:bg-[#111722] border border-gray-200 dark:border-[#324467]">
 <p className="text-gray-600 dark:text-white text-base font-medium leading-normal">Истекает</p>
-<p className="text-gray-900 dark:text-white tracking-light text-2xl font-bold leading-tight">05 мар. 2026 13:33</p>
+<p className="text-gray-900 dark:text-white tracking-light text-2xl font-bold leading-tight">{expiresAtFormatted}</p>
 <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">Истекает через {daysLeft} дней.</p>
 <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">Авто продление каждые 30 дней.</p>
 </div>
