@@ -505,9 +505,18 @@ stop_old_color() {
   compose_for_color "${OLD_COLOR}" "${OLD_BACKEND_PORT}" "${OLD_FRONTEND_PORT}" down || true
 }
 
+print_color_status() {
+  local color="$1"
+  local backend_port="$2"
+  local frontend_port="$3"
+  log "Stack status (${color}):"
+  compose_for_color "${color}" "${backend_port}" "${frontend_port}" ps || true
+}
+
 summary() {
   log "Done. Active color: ${TARGET_COLOR}"
-  compose_for_color "${TARGET_COLOR}" "${TARGET_BACKEND_PORT}" "${TARGET_FRONTEND_PORT}" ps
+  print_color_status "${TARGET_COLOR}" "${TARGET_BACKEND_PORT}" "${TARGET_FRONTEND_PORT}"
+  print_color_status "${OLD_COLOR}" "${OLD_BACKEND_PORT}" "${OLD_FRONTEND_PORT}"
 }
 
 site_installed() {
@@ -555,7 +564,52 @@ run_deploy_flow() {
   deploy_color "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT"
   health_check_target
   switch_nginx
-  stop_old_color
+  log "Keeping ${OLD_COLOR} stack running for fast rollback"
+  summary
+}
+
+color_stack_exists() {
+  local color="$1"
+  local backend_port="$2"
+  local frontend_port="$3"
+  local backend_id
+  local frontend_id
+
+  backend_id="$(compose_for_color "$color" "$backend_port" "$frontend_port" ps -q backend 2>/dev/null || true)"
+  frontend_id="$(compose_for_color "$color" "$backend_port" "$frontend_port" ps -q frontend 2>/dev/null || true)"
+
+  [ -n "$backend_id" ] && [ -n "$frontend_id" ]
+}
+
+switch_existing_flow() {
+  local requested_color="$1"
+  require_sudo
+  prepare_repo
+
+  if [ ! -f "$COMPOSE_FILE" ]; then
+    err "Missing $COMPOSE_FILE"
+    exit 1
+  fi
+
+  prepare_env_files
+  read_domain_from_env
+  get_active_color
+  set_target_color "$requested_color"
+
+  if [ "$ACTIVE_COLOR" = "$TARGET_COLOR" ]; then
+    log "Color ${TARGET_COLOR} is already active"
+    summary
+    return
+  fi
+
+  if ! color_stack_exists "$TARGET_COLOR" "$TARGET_BACKEND_PORT" "$TARGET_FRONTEND_PORT"; then
+    err "Rollback target '${TARGET_COLOR}' is not deployed. Deploy it first via menu item 1."
+    exit 1
+  fi
+
+  log "Rollback switch: ${ACTIVE_COLOR:-none} -> ${TARGET_COLOR}"
+  health_check_target
+  switch_nginx
   summary
 }
 
@@ -601,14 +655,14 @@ main() {
         ;;
       2)
         if site_installed; then
-          run_deploy_flow "green"
+          switch_existing_flow "green"
         else
           err "Сайт не установлен"
         fi
         ;;
       3)
         if site_installed; then
-          run_deploy_flow "blue"
+          switch_existing_flow "blue"
         else
           err "Сайт не установлен"
         fi
