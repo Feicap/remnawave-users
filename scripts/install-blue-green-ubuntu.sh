@@ -191,6 +191,12 @@ install_helm_if_missing() {
   curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 }
 
+set_kubeconfig_from_k3s_if_present() {
+  if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+  fi
+}
+
 install_k3s_if_needed() {
   local enable_k3s_auto_install
 
@@ -212,14 +218,13 @@ install_k3s_if_needed() {
   log "Installing k3s (kubectl context was unavailable)"
   curl -sfL https://get.k3s.io | sh -
 
-  if [ -f /etc/rancher/k3s/k3s.yaml ]; then
-    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-  fi
+  set_kubeconfig_from_k3s_if_present
 
   return 0
 }
 
 is_k8s_ready() {
+  set_kubeconfig_from_k3s_if_present
   if ! command -v kubectl >/dev/null 2>&1; then
     return 1
   fi
@@ -273,6 +278,7 @@ install_monitoring_stack() {
     return
   fi
 
+  set_kubeconfig_from_k3s_if_present
   install_helm_if_missing
 
   render_script="$APP_DIR/scripts/render-monitoring-values.sh"
