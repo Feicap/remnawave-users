@@ -16,6 +16,9 @@ RETRIED_DB_RESET=0
 
 log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 err() { printf '[ERROR] %s\n' "$*" >&2; }
+COLOR_RESET='\033[0m'
+COLOR_YELLOW='\033[1;33m'
+COLOR_ORANGE='\033[38;5;208m'
 
 setup_interactive_tty() {
   if [ -t 0 ] && [ -t 1 ]; then
@@ -35,7 +38,7 @@ setup_interactive_tty() {
 }
 
 menu_print() {
-  printf "%s\n" "$1" > "$MENU_OUTPUT"
+  printf "%b\n" "$1" > "$MENU_OUTPUT"
 }
 
 menu_read() {
@@ -271,12 +274,12 @@ set_target_color() {
     OLD_BACKEND_PORT=$GREEN_BACKEND_PORT
     OLD_FRONTEND_PORT=$GREEN_FRONTEND_PORT
   else
-    TARGET_COLOR="blue"
-    TARGET_BACKEND_PORT=$BLUE_BACKEND_PORT
-    TARGET_FRONTEND_PORT=$BLUE_FRONTEND_PORT
-    OLD_COLOR="green"
-    OLD_BACKEND_PORT=$GREEN_BACKEND_PORT
-    OLD_FRONTEND_PORT=$GREEN_FRONTEND_PORT
+    TARGET_COLOR="green"
+    TARGET_BACKEND_PORT=$GREEN_BACKEND_PORT
+    TARGET_FRONTEND_PORT=$GREEN_FRONTEND_PORT
+    OLD_COLOR="blue"
+    OLD_BACKEND_PORT=$BLUE_BACKEND_PORT
+    OLD_FRONTEND_PORT=$BLUE_FRONTEND_PORT
   fi
 
   export TARGET_COLOR TARGET_BACKEND_PORT TARGET_FRONTEND_PORT OLD_COLOR OLD_BACKEND_PORT OLD_FRONTEND_PORT
@@ -610,34 +613,65 @@ switch_existing_flow() {
   log "Rollback switch: ${ACTIVE_COLOR:-none} -> ${TARGET_COLOR}"
   health_check_target
   switch_nginx
+  log "Stopping previous active color after rollback: ${OLD_COLOR}"
+  compose_for_color "${OLD_COLOR}" "${OLD_BACKEND_PORT}" "${OLD_FRONTEND_PORT}" down || true
   summary
+}
+
+confirm_action() {
+  local prompt="$1"
+  local answer
+  while true; do
+    if ! menu_read "${prompt} (да/нет): " answer; then
+      err "Не удалось прочитать подтверждение"
+      return 1
+    fi
+    case "${answer,,}" in
+      да|д|yes|y) return 0 ;;
+      нет|н|no|n) return 1 ;;
+      *) menu_print "${COLOR_ORANGE}Введите 'да' или 'нет'.${COLOR_RESET}" ;;
+    esac
+  done
 }
 
 print_menu() {
   local active=""
-  local blue_label="2. Переключение на green"
-  local green_label="3. Переключение на blue"
+  local blue_label="2. blue"
+  local green_label="3. green"
+  local install_hint=""
 
   if [ -f "$ACTIVE_FILE" ]; then
     active="$(cat "$ACTIVE_FILE" 2>/dev/null || true)"
   fi
 
+  if [ "$active" = "blue" ]; then
+    install_hint=" (установит на green)"
+  elif [ "$active" = "green" ]; then
+    install_hint=" (установит на blue)"
+  else
+    install_hint=" (установит на green)"
+  fi
+
   if [ "$active" = "green" ]; then
-    blue_label="2. Переключение на green (активен)"
+    green_label="3. green (active)"
   fi
   if [ "$active" = "blue" ]; then
-    green_label="3. Переключение на blue (активен)"
+    blue_label="2. blue (active)"
   fi
 
   menu_print ""
-  menu_print "Выберите действие:"
-  menu_print "1. Установить сайт"
+  menu_print "${COLOR_YELLOW}Выберите действие:${COLOR_RESET}"
+  menu_print "${COLOR_ORANGE}1. Установка сайта${install_hint}${COLOR_RESET}"
   if site_installed; then
-    menu_print "$blue_label"
-    menu_print "$green_label"
-    menu_print "4. Удаление всех изменений"
+    if color_stack_exists "blue" "$BLUE_BACKEND_PORT" "$BLUE_FRONTEND_PORT" || [ "$active" = "blue" ]; then
+      menu_print "${COLOR_ORANGE}${blue_label}${COLOR_RESET}"
+    fi
+    if color_stack_exists "green" "$GREEN_BACKEND_PORT" "$GREEN_FRONTEND_PORT" || [ "$active" = "green" ]; then
+      menu_print "${COLOR_ORANGE}${green_label}${COLOR_RESET}"
+    fi
+    menu_print "${COLOR_ORANGE}4. Удаление всех изменений${COLOR_RESET}"
   fi
-  menu_print "0. Выход из скрипта"
+  menu_print "${COLOR_ORANGE}0. Выход из скрипта${COLOR_RESET}"
 }
 
 main() {
@@ -651,29 +685,51 @@ main() {
 
     case "$choice" in
       1)
-        run_deploy_flow ""
+        if confirm_action "Запустить установку сайта?"; then
+          run_deploy_flow ""
+        else
+          log "Операция отменена"
+        fi
         ;;
       2)
         if site_installed; then
-          switch_existing_flow "green"
+          get_active_color
+          if [ "$ACTIVE_COLOR" = "blue" ]; then
+            log "blue уже активен"
+          elif color_stack_exists "blue" "$BLUE_BACKEND_PORT" "$BLUE_FRONTEND_PORT"; then
+            if confirm_action "Переключить трафик на blue (rollback)?"; then
+              switch_existing_flow "blue"
+            else
+              log "Операция отменена"
+            fi
+          else
+            err "blue не развернут"
+          fi
         else
           err "Сайт не установлен"
         fi
         ;;
       3)
         if site_installed; then
-          switch_existing_flow "blue"
+          get_active_color
+          if [ "$ACTIVE_COLOR" = "green" ]; then
+            log "green уже активен"
+          elif color_stack_exists "green" "$GREEN_BACKEND_PORT" "$GREEN_FRONTEND_PORT"; then
+            if confirm_action "Переключить трафик на green (rollback)?"; then
+              switch_existing_flow "green"
+            else
+              log "Операция отменена"
+            fi
+          else
+            err "green не развернут"
+          fi
         else
           err "Сайт не установлен"
         fi
         ;;
       4)
         if site_installed; then
-          if ! menu_read "Подтвердите удаление (yes/no): " confirm; then
-            err "Не удалось прочитать подтверждение"
-            continue
-          fi
-          if [ "$confirm" = "yes" ]; then
+          if confirm_action "Удалить все изменения и окружение?"; then
             remove_all_changes
           else
             log "Удаление отменено"
@@ -683,8 +739,10 @@ main() {
         fi
         ;;
       0)
-        log "Выход"
-        exit 0
+        if confirm_action "Выйти из скрипта?"; then
+          log "Выход"
+          exit 0
+        fi
         ;;
       *)
         err "Неизвестный пункт меню"
