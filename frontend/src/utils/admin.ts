@@ -15,3 +15,11 @@ export function getAdminIdsFromEnv(): number[] {
 export function isAdminUserId(userId: number): boolean {
   return getAdminIdsFromEnv().includes(userId)
 }
+
+export function isAdminUser(user: { id: number; telegram_id?: number }): boolean {
+  if (isAdminUserId(user.id)) {
+    return true
+  }
+
+  return typeof user.telegram_id === 'number' && isAdminUserId(user.telegram_id)
+}

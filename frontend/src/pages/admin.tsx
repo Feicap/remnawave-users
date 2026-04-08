@@ -1,12 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
-import type { TelegramUser } from '../types/telegram'
-import { getStoredUser } from '../utils/auth'
-import { isAdminUserId } from '../utils/admin'
-
-interface AuthenticatedUser extends TelegramUser {
-  token: string
-}
+import type { AuthUser } from '../types/auth'
+import { clearStoredAuth, getStoredUser } from '../utils/auth'
+import { isAdminUser } from '../utils/admin'
 
 const env = import.meta.env as Record<string, string | undefined>
 const grafanaDomain = String(env.GRAFANA_DOMAIN ?? '').trim()
@@ -21,7 +17,7 @@ const ADMIN_ROWS = [
 
 export default function Admin() {
   const navigate = useNavigate()
-  const [user] = useState<AuthenticatedUser | null>(() => getStoredUser() as AuthenticatedUser | null)
+  const [user] = useState<AuthUser | null>(() => getStoredUser())
 
   useEffect(() => {
     if (!user) {
@@ -29,12 +25,12 @@ export default function Admin() {
       return
     }
 
-    if (!isAdminUserId(user.id)) {
+    if (!isAdminUser(user)) {
       navigate('/profile')
     }
   }, [navigate, user])
 
-  if (!user || !isAdminUserId(user.id)) {
+  if (!user || !isAdminUser(user)) {
     return <div>Loading...</div>
   }
 
@@ -47,9 +43,7 @@ export default function Admin() {
   }
 
   function handleLogout() {
-    localStorage.removeItem('tg_user')
-    localStorage.removeItem('token')
-    localStorage.removeItem('subscription_url')
+    clearStoredAuth()
     navigate('/auth')
   }
 

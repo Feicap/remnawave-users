@@ -1,13 +1,10 @@
+import type { FormEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import type { TelegramUser } from '../types/telegram'
+import type { AuthUser } from '../types/auth'
 import type { PaymentProof } from '../types/payment'
-import { buildAuthHeaders, getStoredUser } from '../utils/auth'
-import { isAdminUserId } from '../utils/admin'
-
-interface AuthenticatedUser extends TelegramUser {
-  token: string
-}
+import { buildAuthHeaders, clearStoredAuth, getStoredUser } from '../utils/auth'
+import { isAdminUser } from '../utils/admin'
 
 function statusIcon(status: PaymentProof['status']): { icon: string; className: string; label: string } {
   if (status === 'approved') {
@@ -21,7 +18,7 @@ function statusIcon(status: PaymentProof['status']): { icon: string; className: 
 
 export default function ProfilePay() {
   const navigate = useNavigate()
-  const [user] = useState<AuthenticatedUser | null>(() => getStoredUser() as AuthenticatedUser | null)
+  const [user] = useState<AuthUser | null>(() => getStoredUser())
   const [items, setItems] = useState<PaymentProof[]>([])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -30,7 +27,7 @@ export default function ProfilePay() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const imageBlobUrlsRef = useRef<string[]>([])
 
-  const canViewAdminPanel = useMemo(() => (user ? isAdminUserId(user.id) : false), [user])
+  const canViewAdminPanel = useMemo(() => (user ? isAdminUser(user) : false), [user])
 
   const loadMyProofs = useCallback(async () => {
     if (!user) {
@@ -55,7 +52,7 @@ export default function ProfilePay() {
     loadMyProofs().catch((e: unknown) => setError(e instanceof Error ? e.message : 'Ошибка загрузки'))
     const intervalId = setInterval(() => {
       loadMyProofs().catch(() => {
-        // ������ �������������� ���������� ����������, ����� �� �������� ���������.
+        // Молча игнорируем временные ошибки автообновления.
       })
     }, 5000)
 
@@ -67,7 +64,7 @@ export default function ProfilePay() {
       setImageUrls({})
       return
     }
-    const authUser = user as TelegramUser
+    const currentUser = user
 
     let cancelled = false
     const controllers: AbortController[] = []
@@ -78,7 +75,7 @@ export default function ProfilePay() {
         const controller = new AbortController()
         controllers.push(controller)
         const res = await fetch(item.file_url, {
-          headers: buildAuthHeaders(authUser),
+          headers: buildAuthHeaders(currentUser),
           signal: controller.signal,
         })
         if (!res.ok) {
@@ -95,7 +92,7 @@ export default function ProfilePay() {
     }
 
     loadImages().catch(() => {
-      // ���� ���������� ������ �������� �����������.
+      // Молча игнорируем ошибки загрузки превью.
     })
 
     return () => {
@@ -124,12 +121,11 @@ export default function ProfilePay() {
     return <div>Loading...</div>
   }
 
-  async function handleUpload(event: React.FormEvent<HTMLFormElement>) {
+  async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!user) {
       return
     }
-    const authUser = user as TelegramUser
     if (!selectedFile) {
       setError('Выберите файл перед отправкой')
       return
@@ -142,7 +138,7 @@ export default function ProfilePay() {
       formData.append('file', selectedFile)
       const res = await fetch('/api/payment-proofs/', {
         method: 'POST',
-        headers: buildAuthHeaders(authUser),
+        headers: buildAuthHeaders(user),
         body: formData,
       })
 
@@ -169,9 +165,7 @@ export default function ProfilePay() {
   }
 
   function handleAuthClick() {
-    localStorage.removeItem('tg_user')
-    localStorage.removeItem('token')
-    localStorage.removeItem('subscription_url')
+    clearStoredAuth()
     navigate('/auth')
   }
 

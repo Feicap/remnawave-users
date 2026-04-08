@@ -1,88 +1,162 @@
-import os
 import asyncio
 import logging
-from typing import Optional
+import os
+from typing import Any
+from urllib.parse import quote
+
 import aiohttp
 
 logger = logging.getLogger(__name__)
 
 
-async def get_user_by_telegram_id(telegram_id: int) -> Optional[dict]:
-    """
-    Fetch a single user by telegram_id from Remnawave API.
-    Returns the user dict if found, else None.
-    """
-
-    base_url: str = os.getenv("REMNAWAVE_BASE_URL")
-    token: str = os.getenv("REMNAWAVE_TOKEN")
-    cookie: str = os.getenv("REMNAWAVE_COOKIE")
-    logger.warning("telegram_id: %s", telegram_id)
+def _first_non_empty(*values: Any) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
 
 
-    if not base_url or not token or not cookie:
+def _parse_optional_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if text.startswith("-"):
+        text = text[1:]
+    if text.isdigit():
+        return int(str(value).strip())
+    return None
+
+
+def _extract_cookie_map(raw_cookie: str) -> dict[str, str]:
+    cookies: dict[str, str] = {}
+    for chunk in raw_cookie.split(";"):
+        part = chunk.strip()
+        if not part or "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key and value:
+            cookies[key] = value
+    return cookies
+
+
+def _pick_first_user(payload: Any) -> dict[str, Any] | None:
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict):
+                return item
+        return None
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def normalize_remnawave_user(payload: Any) -> dict[str, Any] | None:
+    user = _pick_first_user(payload)
+    if user is None:
+        return None
+
+    email = _first_non_empty(user.get("email")).lower()
+    telegram_id = _parse_optional_int(user.get("telegramId") or user.get("telegram_id"))
+    telegram_username = _first_non_empty(
+        user.get("telegramUsername"),
+        user.get("telegram_username"),
+        user.get("username"),
+    )
+    photo = _first_non_empty(
+        user.get("photoUrl"),
+        user.get("photo_url"),
+        user.get("avatarUrl"),
+        user.get("avatar_url"),
+    )
+    subscription_url = _first_non_empty(
+        user.get("subscriptionUrl"),
+        user.get("subscription_url"),
+        user.get("url"),
+    )
+
+    return {
+        "email": email or None,
+        "telegram_id": telegram_id,
+        "telegram_username": telegram_username or None,
+        "photo": photo or None,
+        "subscription_url": subscription_url or None,
+        "raw": user,
+    }
+
+
+async def _fetch_remnawave_user(path: str, lookup_label: str, lookup_value: str | int) -> dict[str, Any] | None:
+    base_url = str(os.getenv("REMNAWAVE_BASE_URL", "")).rstrip("/")
+    token = str(os.getenv("REMNAWAVE_TOKEN", "")).strip()
+    raw_cookie = str(os.getenv("REMNAWAVE_COOKIE", "")).strip()
+
+    if not base_url or not token or not raw_cookie:
         logger.warning("REMNAWAVE_BASE_URL, REMNAWAVE_TOKEN, or REMNAWAVE_COOKIE not configured")
         return None
 
-    url = f"{base_url}/api/users/by-telegram-id/{telegram_id}"
+    headers = {"Authorization": f"Bearer {token}"}
+    cookies = _extract_cookie_map(raw_cookie)
+    if not cookies:
+        logger.warning("REMNAWAVE_COOKIE is malformed")
+        return None
 
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    cookies = {
-        "KYccDWjT": cookie.split('=')[1]
-    }
-
+    url = f"{base_url}{path}"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, cookies=cookies, ssl=False) as resp:
-                if resp.status != 200:
-                    logger.warning("Remnawave returned status %s for telegram_id %s", resp.status, telegram_id)
+            async with session.get(url, headers=headers, cookies=cookies, ssl=False) as response:
+                if response.status == 404:
+                    logger.info("Remnawave user not found for %s=%s", lookup_label, lookup_value)
                     return None
-                data = await resp.json()
-                return data.get("response")
-    except Exception as e:
-        logger.error("Error fetching user by telegram_id: %s", str(e))
-        import traceback
-        logger.error("Traceback: %s", traceback.format_exc())
+                if response.status != 200:
+                    logger.warning(
+                        "Remnawave returned status %s for %s=%s",
+                        response.status,
+                        lookup_label,
+                        lookup_value,
+                    )
+                    return None
+
+                data = await response.json()
+                return normalize_remnawave_user(data.get("response"))
+    except Exception as exc:
+        logger.error("Error fetching Remnawave user for %s=%s: %s", lookup_label, lookup_value, exc)
         return None
 
 
-def get_subscription_url_sync(telegram_id: int) -> Optional[str]:
-    """
-    Synchronous wrapper to fetch subscription_url by telegram_id.
-    """
-    logger.info("Getting subscription URL for telegram_id: %s", telegram_id)
+async def get_user_by_telegram_id(telegram_id: int) -> dict[str, Any] | None:
+    return await _fetch_remnawave_user(
+        f"/api/users/by-telegram-id/{telegram_id}",
+        "telegram_id",
+        telegram_id,
+    )
 
+
+async def get_user_by_email(email: str) -> dict[str, Any] | None:
+    normalized_email = email.strip().lower()
+    return await _fetch_remnawave_user(
+        f"/api/users/by-email/{quote(normalized_email, safe='')}",
+        "email",
+        normalized_email,
+    )
+
+
+def get_remnawave_user_sync(*, email: str | None = None, telegram_id: int | None = None) -> dict[str, Any] | None:
+    if email:
+        coroutine = get_user_by_email(email)
+    elif telegram_id is not None:
+        coroutine = get_user_by_telegram_id(telegram_id)
+    else:
+        return None
+
+    loop = asyncio.new_event_loop()
     try:
-        loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        users = loop.run_until_complete(get_user_by_telegram_id(telegram_id))
+        return loop.run_until_complete(coroutine)
+    finally:
         loop.close()
-
-        if not users:
-            logger.warning("User with telegram_id %s not found", telegram_id)
-            return None
-
-        # Если вернулся список, берём первый элемент
-        if isinstance(users, list):
-            user = users[0]
-        else:
-            user = users
-
-        subscription_url = (
-            user.get("subscriptionUrl") or
-            user.get("subscription_url") or
-            user.get("url")
-        )
-        if subscription_url:
-            logger.info("Subscription URL found: %s", subscription_url)
-            return subscription_url
-        else:
-            logger.warning("User found but no subscription URL")
-            return None
-    except Exception as e:
-        logger.error("Error in get_subscription_url_sync: %s", str(e))
-        import traceback
-        logger.error("Traceback: %s", traceback.format_exc())
-        return None

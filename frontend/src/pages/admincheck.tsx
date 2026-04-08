@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import type { TelegramUser } from '../types/telegram'
+import type { AuthUser } from '../types/auth'
 import type { PaymentProof, PaymentProofUser, PaymentStatus } from '../types/payment'
-import { buildAuthHeaders, getStoredUser } from '../utils/auth'
-import { isAdminUserId } from '../utils/admin'
-
-interface AuthenticatedUser extends TelegramUser {
-  token: string
-}
+import { buildAuthHeaders, clearStoredAuth, getStoredUser } from '../utils/auth'
+import { isAdminUser } from '../utils/admin'
 
 function statusBadge(status: PaymentStatus): { label: string; className: string } {
   if (status === 'approved') {
@@ -21,7 +17,7 @@ function statusBadge(status: PaymentStatus): { label: string; className: string 
 
 export default function AdminCheck() {
   const navigate = useNavigate()
-  const [user] = useState<AuthenticatedUser | null>(() => getStoredUser() as AuthenticatedUser | null)
+  const [user] = useState<AuthUser | null>(() => getStoredUser())
   const [users, setUsers] = useState<PaymentProofUser[]>([])
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
   const [proofs, setProofs] = useState<PaymentProof[]>([])
@@ -31,7 +27,7 @@ export default function AdminCheck() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const imageBlobUrlsRef = useRef<string[]>([])
 
-  const isAdmin = useMemo(() => (user ? isAdminUserId(user.id) : false), [user])
+  const isAdmin = useMemo(() => (user ? isAdminUser(user) : false), [user])
 
   const loadUsers = useCallback(async () => {
     if (!user) {
@@ -65,7 +61,7 @@ export default function AdminCheck() {
       navigate('/auth')
       return
     }
-    if (!isAdminUserId(user.id)) {
+    if (!isAdminUser(user)) {
       navigate('/profile')
       return
     }
@@ -76,7 +72,7 @@ export default function AdminCheck() {
 
     const interval = setInterval(() => {
       Promise.all([loadUsers(), loadProofs()]).catch(() => {
-        // ������ �������������� ���������� ����������.
+        // Молча игнорируем временные ошибки автообновления.
       })
     }, 5000)
     return () => clearInterval(interval)
@@ -93,8 +89,7 @@ export default function AdminCheck() {
       setImageUrls({})
       return
     }
-    const authUser = user as TelegramUser
-
+    const currentUser = user
     let cancelled = false
     const controllers: AbortController[] = []
 
@@ -104,7 +99,7 @@ export default function AdminCheck() {
         const controller = new AbortController()
         controllers.push(controller)
         const res = await fetch(proof.file_url, {
-          headers: buildAuthHeaders(authUser),
+          headers: buildAuthHeaders(currentUser),
           signal: controller.signal,
         })
         if (!res.ok) {
@@ -122,7 +117,7 @@ export default function AdminCheck() {
     }
 
     loadImages().catch(() => {
-      // ������ �������� ����������� ����������.
+      // Молча игнорируем ошибки загрузки превью.
     })
 
     return () => {
@@ -155,14 +150,13 @@ export default function AdminCheck() {
     if (!user) {
       return
     }
-    const authUser = user as TelegramUser
     setIsUpdating(true)
     setError('')
     try {
       const res = await fetch(`/api/admin/payment-proofs/${proofId}/`, {
         method: 'PATCH',
         headers: {
-          ...buildAuthHeaders(authUser),
+          ...buildAuthHeaders(user),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ status }),
@@ -189,13 +183,12 @@ export default function AdminCheck() {
       return
     }
 
-    const authUser = user as TelegramUser
     setIsUpdating(true)
     setError('')
     try {
       const res = await fetch(`/api/admin/payment-proofs/${proofId}/`, {
         method: 'DELETE',
-        headers: buildAuthHeaders(authUser),
+        headers: buildAuthHeaders(user),
       })
       if (!res.ok) {
         const payload = (await res.json().catch(() => ({ error: 'Ошибка удаления' }))) as { error?: string }
@@ -208,6 +201,7 @@ export default function AdminCheck() {
       setIsUpdating(false)
     }
   }
+
   function handleBackToAdmin() {
     navigate('/admin')
   }
@@ -217,9 +211,7 @@ export default function AdminCheck() {
   }
 
   function handleLogout() {
-    localStorage.removeItem('tg_user')
-    localStorage.removeItem('token')
-    localStorage.removeItem('subscription_url')
+    clearStoredAuth()
     navigate('/auth')
   }
 
@@ -323,20 +315,22 @@ export default function AdminCheck() {
                   const badge = statusBadge(proof.status)
                   return (
                     <div key={proof.id} className="rounded-xl border border-gray-200 dark:border-[#324467] p-4 bg-gray-50 dark:bg-[#1a2539]">
-                        {!imageUrls[proof.id] ? (
-                          <div className="w-full h-56 rounded-lg mb-3 bg-gray-200/40 dark:bg-[#0f172a] animate-pulse" />
-                        ) : (
-                          <button className="w-full" onClick={() => setPreviewUrl(imageUrls[proof.id])} type="button">
-                            <img
-                              alt={`proof-${proof.id}`}
-                              className="w-full max-h-96 object-contain rounded-lg mb-3"
-                              src={imageUrls[proof.id]}
-                            />
-                          </button>
-                        )}
+                      {!imageUrls[proof.id] ? (
+                        <div className="w-full h-56 rounded-lg mb-3 bg-gray-200/40 dark:bg-[#0f172a] animate-pulse" />
+                      ) : (
+                        <button className="w-full" onClick={() => setPreviewUrl(imageUrls[proof.id])} type="button">
+                          <img
+                            alt={`proof-${proof.id}`}
+                            className="w-full max-h-96 object-contain rounded-lg mb-3"
+                            src={imageUrls[proof.id]}
+                          />
+                        </button>
+                      )}
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <p className="text-sm text-gray-900 dark:text-white">Отправлено: {new Date(proof.created_at).toLocaleString('ru-RU')}</p>
+                          <p className="text-sm text-gray-900 dark:text-white">
+                            Отправлено: {new Date(proof.created_at).toLocaleString('ru-RU')}
+                          </p>
                           <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium mt-2 ${badge.className}`}>
                             {badge.label}
                           </span>
