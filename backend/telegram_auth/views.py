@@ -199,6 +199,22 @@ def _extract_auth_identity(request: HttpRequest) -> tuple[int | None, str | None
     return user_id, email, telegram_id, username, telegram_username, photo, auth_provider
 
 
+def _extract_payment_proof_identity(request: HttpRequest) -> tuple[int | None, list[int], str]:
+    user_id, email, telegram_id, username, telegram_username, _, _ = _extract_auth_identity(request)
+    if user_id is None:
+        return None, [], ""
+
+    if telegram_id is not None:
+        related_user_ids = [telegram_id]
+        if user_id != telegram_id:
+            related_user_ids.append(user_id)
+        proof_username = telegram_username or username or email or ""
+        return telegram_id, related_user_ids, proof_username
+
+    proof_username = email or username or ""
+    return user_id, [user_id], proof_username
+
+
 def _is_admin(user_id: int) -> bool:
     return user_id in _parse_admin_ids()
 
@@ -382,12 +398,12 @@ def health_check(request: HttpRequest) -> JsonResponse:
 
 @csrf_exempt
 def payment_proofs_collection(request: HttpRequest) -> JsonResponse:
-    user_id, username = _extract_auth_user(request)
-    if user_id is None:
+    proof_user_id, related_user_ids, proof_username = _extract_payment_proof_identity(request)
+    if proof_user_id is None:
         return JsonResponse({"error": "Unauthorized"}, status=401)
 
     if request.method == "GET":
-        proofs = PaymentProof.objects.filter(user_id=user_id).order_by("-created_at")
+        proofs = PaymentProof.objects.filter(user_id__in=related_user_ids).order_by("-created_at")
         payload = []
         for proof in proofs:
             data = _serialize_proof(proof)
@@ -410,8 +426,8 @@ def payment_proofs_collection(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "File too large"}, status=400)
 
     proof = PaymentProof.objects.create(
-        user_id=user_id,
-        username=username,
+        user_id=proof_user_id,
+        username=proof_username,
         file=uploaded,
         status=PaymentProof.STATUS_PENDING,
     )
@@ -421,7 +437,7 @@ def payment_proofs_collection(request: HttpRequest) -> JsonResponse:
 
 
 def payment_proof_file(request: HttpRequest, proof_id: int) -> JsonResponse | FileResponse:
-    user_id, _ = _extract_auth_user(request)
+    user_id, related_user_ids, _ = _extract_payment_proof_identity(request)
     _, _, telegram_id, _, _, _, _ = _extract_auth_identity(request)
     if user_id is None:
         return JsonResponse({"error": "Unauthorized"}, status=401)
@@ -431,7 +447,7 @@ def payment_proof_file(request: HttpRequest, proof_id: int) -> JsonResponse | Fi
     except PaymentProof.DoesNotExist:
         return JsonResponse({"error": "Not found"}, status=404)
 
-    if proof.user_id != user_id and not _is_admin_identity(user_id, telegram_id):
+    if proof.user_id not in related_user_ids and not _is_admin_identity(user_id, telegram_id):
         return JsonResponse({"error": "Forbidden"}, status=403)
 
     content_type, _ = mimetypes.guess_type(proof.file.name)
@@ -459,15 +475,69 @@ def admin_payment_proof_users(request: HttpRequest) -> JsonResponse:
         .order_by("-last_created")
     )
 
-    items = []
+    raw_user_ids = [int(row["user_id"]) for row in rows]
+    local_users_by_id = {
+        int(item["id"]): _normalize_email(str(item["email"] or ""))
+        for item in User.objects.filter(id__in=raw_user_ids).values("id", "email")
+    }
+
+    remnawave_by_email: dict[str, dict | None] = {}
+    grouped: dict[str, dict] = {}
+
     for row in rows:
-        items.append(
-            {
-                "user_id": row["user_id"],
-                "username": row.get("username") or "",
-                "pending_count": row.get("pending_count", 0),
+        raw_user_id = int(row["user_id"])
+        raw_username = str(row.get("username") or "").strip()
+        pending_count = int(row.get("pending_count", 0))
+
+        email = ""
+        if "@" in raw_username:
+            email = _normalize_email(raw_username)
+        elif raw_user_id in local_users_by_id:
+            email = local_users_by_id[raw_user_id]
+
+        remnawave_user = None
+        if email:
+            if email not in remnawave_by_email:
+                remnawave_by_email[email] = _resolve_remnawave_user(email=email)
+            remnawave_user = remnawave_by_email[email]
+
+        linked_telegram_id = remnawave_user.get("telegram_id") if remnawave_user else None
+
+        if linked_telegram_id is not None:
+            key = f"tg:{linked_telegram_id}"
+            display_username = (
+                _normalize_optional_text(remnawave_user.get("telegram_username"))
+                or _normalize_optional_text(raw_username)
+                or email
+                or str(linked_telegram_id)
+            )
+            identifier = str(linked_telegram_id)
+            identifier_type = "telegram"
+            canonical_user_id = int(linked_telegram_id)
+        else:
+            key = f"raw:{raw_user_id}"
+            display_username = email or raw_username or str(raw_user_id)
+            identifier = email or str(raw_user_id)
+            identifier_type = "email" if email else "id"
+            canonical_user_id = raw_user_id
+
+        existing = grouped.get(key)
+        if existing is None:
+            grouped[key] = {
+                "user_id": canonical_user_id,
+                "username": display_username,
+                "pending_count": pending_count,
+                "identifier": identifier,
+                "identifier_type": identifier_type,
+                "source_user_ids": [raw_user_id],
             }
-        )
+            continue
+
+        existing["pending_count"] = int(existing["pending_count"]) + pending_count
+        if raw_user_id not in existing["source_user_ids"]:
+            existing["source_user_ids"].append(raw_user_id)
+
+    items = list(grouped.values())
 
     return JsonResponse({"items": items})
 
@@ -482,11 +552,21 @@ def admin_payment_proofs(request: HttpRequest) -> JsonResponse:
     if request.method != "GET":
         return JsonResponse({"error": "Invalid method"}, status=405)
 
-    target_user_id = request.GET.get("user_id", "").strip()
-    if not target_user_id.isdigit():
-        return JsonResponse({"error": "user_id is required"}, status=400)
+    source_user_ids_raw = request.GET.get("source_user_ids", "").strip()
+    source_user_ids: list[int] = []
+    if source_user_ids_raw:
+        for value in source_user_ids_raw.split(","):
+            cleaned = value.strip()
+            if cleaned.isdigit():
+                source_user_ids.append(int(cleaned))
 
-    proofs = PaymentProof.objects.filter(user_id=int(target_user_id)).order_by("-created_at")
+    if not source_user_ids:
+        target_user_id = request.GET.get("user_id", "").strip()
+        if not target_user_id.isdigit():
+            return JsonResponse({"error": "user_id is required"}, status=400)
+        source_user_ids = [int(target_user_id)]
+
+    proofs = PaymentProof.objects.filter(user_id__in=source_user_ids).order_by("-created_at")
     items = []
     for proof in proofs:
         item = _serialize_proof(proof)

@@ -16,4 +16,7 @@ export interface PaymentProofUser {
   user_id: number
   username: string
   pending_count: number
+  identifier?: string
+  identifier_type?: 'telegram' | 'email' | 'id'
+  source_user_ids?: number[]
 }

@@ -55,13 +55,22 @@ export default function AdminCheck() {
     if (!user || !selectedUserId) {
       return
     }
-    const res = await fetch(`/api/admin/payment-proofs/?user_id=${selectedUserId}`, { headers: buildAuthHeaders(user) })
+    const selectedUser = users.find((item) => item.user_id === selectedUserId)
+    const sourceUserIds =
+      selectedUser && Array.isArray(selectedUser.source_user_ids) && selectedUser.source_user_ids.length > 0
+        ? selectedUser.source_user_ids
+        : [selectedUserId]
+    const params = new URLSearchParams({
+      user_id: String(selectedUserId),
+      source_user_ids: sourceUserIds.join(','),
+    })
+    const res = await fetch(`/api/admin/payment-proofs/?${params.toString()}`, { headers: buildAuthHeaders(user) })
     if (!res.ok) {
       throw new Error('Не удалось загрузить заявки пользователя')
     }
     const payload = (await res.json()) as { items: PaymentProof[] }
     setProofs(payload.items)
-  }, [user, selectedUserId])
+  }, [user, selectedUserId, users])
 
   useEffect(() => {
     if (!user) {
@@ -313,8 +322,16 @@ export default function AdminCheck() {
                   }`}
                   type="button"
                 >
-                  <p className="text-sm font-semibold text-gray-900 dark:text-white">{item.username || `id:${item.user_id}`}</p>
-                  <p className="text-xs text-gray-500 dark:text-[#92a4c9]">ID: {item.user_id}</p>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                      {item.identifier_type === 'email' ? item.identifier || item.username : item.username || `id:${item.user_id}`}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-[#92a4c9]">
+                      {item.identifier_type === 'telegram'
+                        ? `Telegram ID: ${item.identifier || item.user_id}`
+                        : item.identifier_type === 'email'
+                          ? `Почта: ${item.identifier || item.username}`
+                          : `ID: ${item.identifier || item.user_id}`}
+                    </p>
                   {item.pending_count > 0 ? (
                     <p className="text-xs text-yellow-500 mt-1">Ожидают: {item.pending_count}</p>
                   ) : null}
