@@ -1,4 +1,4 @@
-import type { FormEvent } from 'react'
+import type { FormEvent, SyntheticEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import type { AuthUser } from '../types/auth'
@@ -19,6 +19,20 @@ function statusIcon(status: PaymentProof['status']): { icon: string; className: 
   return { icon: 'schedule', className: 'text-gray-400', label: 'Ожидание' }
 }
 
+function getAvatarUrl(photo?: string): string {
+  const normalized = photo?.trim() ?? ''
+  return normalized || DEFAULT_AVATAR
+}
+
+function handleAvatarError(event: SyntheticEvent<HTMLImageElement>): void {
+  const image = event.currentTarget
+  if (image.dataset.fallbackApplied === '1') {
+    return
+  }
+  image.dataset.fallbackApplied = '1'
+  image.src = DEFAULT_AVATAR
+}
+
 export default function ProfilePay() {
   const navigate = useNavigate()
   const [user] = useState<AuthUser | null>(() => getStoredUser())
@@ -32,6 +46,7 @@ export default function ProfilePay() {
 
   const canViewAdminPanel = useMemo(() => (user ? isAdminUser(user) : false), [user])
   const telegramId = typeof user?.telegram_id === 'number' && Number.isFinite(user.telegram_id) ? user.telegram_id : null
+  const avatarUrl = getAvatarUrl(user?.photo)
 
   const loadMyProofs = useCallback(async () => {
     if (!user) {
@@ -183,11 +198,12 @@ export default function ProfilePay() {
           </div>
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-3 px-3 py-2">
-              <div className="size-10 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
+              <div className="size-10 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
                 <img
                   alt={user.username || 'avatar'}
-                  className="block h-full w-full object-cover"
-                  src={user.photo || DEFAULT_AVATAR}
+                  className="size-10 rounded-full object-cover object-center"
+                  onError={handleAvatarError}
+                  src={avatarUrl}
                 />
               </div>
               <div className="flex flex-col">

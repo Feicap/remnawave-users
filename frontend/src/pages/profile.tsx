@@ -1,3 +1,4 @@
+import type { SyntheticEvent } from 'react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import type { AuthUser } from '../types/auth'
@@ -16,6 +17,20 @@ function getTelegramId(user: AuthUser): number | null {
     return user.telegram_id
   }
   return null
+}
+
+function getAvatarUrl(photo?: string): string {
+  const normalized = photo?.trim() ?? ''
+  return normalized || DEFAULT_AVATAR
+}
+
+function handleAvatarError(event: SyntheticEvent<HTMLImageElement>): void {
+  const image = event.currentTarget
+  if (image.dataset.fallbackApplied === '1') {
+    return
+  }
+  image.dataset.fallbackApplied = '1'
+  image.src = DEFAULT_AVATAR
 }
 
 export default function Profile() {
@@ -75,6 +90,7 @@ export default function Profile() {
   const canViewAdminPanel = isAdminUser(user)
   const displayName = getDisplayName(user)
   const telegramId = getTelegramId(user)
+  const avatarUrl = getAvatarUrl(user.photo)
 
   return (
     <div className="flex min-h-screen flex-col md:h-screen md:flex-row">
@@ -87,11 +103,12 @@ export default function Profile() {
             </div>
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3 px-3 py-2">
-                <div className="size-10 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
+                <div className="size-10 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
                   <img
                     alt={displayName}
-                    className="block h-full w-full object-cover"
-                    src={user.photo || DEFAULT_AVATAR}
+                    className="size-10 rounded-full object-cover object-center"
+                    onError={handleAvatarError}
+                    src={avatarUrl}
                   />
                 </div>
                 <div className="flex flex-col">

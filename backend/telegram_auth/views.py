@@ -54,6 +54,13 @@ def _parse_optional_int(value: str) -> int | None:
     return int(value.strip())
 
 
+def _normalize_optional_text(value: object | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
 def _build_auth_payload(
     *,
     user_id: int,
@@ -68,11 +75,15 @@ def _build_auth_payload(
 ) -> dict:
     remnawave_user = remnawave_user or {}
 
-    resolved_email = remnawave_user.get("email") or email
+    resolved_email = _normalize_optional_text(remnawave_user.get("email")) or _normalize_optional_text(email)
     resolved_telegram_id = remnawave_user.get("telegram_id") or telegram_id
-    resolved_telegram_username = remnawave_user.get("telegram_username") or telegram_username
-    resolved_photo = remnawave_user.get("photo") or photo
-    resolved_subscription_url = remnawave_user.get("subscription_url") or subscription_url
+    resolved_telegram_username = _normalize_optional_text(remnawave_user.get("telegram_username")) or _normalize_optional_text(
+        telegram_username
+    )
+    resolved_photo = _normalize_optional_text(remnawave_user.get("photo")) or _normalize_optional_text(photo)
+    resolved_subscription_url = _normalize_optional_text(remnawave_user.get("subscription_url")) or _normalize_optional_text(
+        subscription_url
+    )
 
     display_username = resolved_telegram_username or resolved_email or username or ""
 
@@ -107,7 +118,15 @@ def _merge_remnawave_users(primary: dict | None, secondary: dict | None) -> dict
 
     merged = dict(primary)
     for key in ("email", "telegram_id", "telegram_username", "photo", "subscription_url"):
-        if not merged.get(key) and secondary.get(key):
+        primary_value = merged.get(key)
+        if isinstance(primary_value, str):
+            primary_value = primary_value.strip()
+
+        secondary_value = secondary.get(key)
+        if isinstance(secondary_value, str):
+            secondary_value = secondary_value.strip()
+
+        if not primary_value and secondary_value:
             merged[key] = secondary.get(key)
 
     if merged.get("raw") is None and secondary.get("raw") is not None:
@@ -123,9 +142,10 @@ def _resolve_remnawave_user(*, email: str | None = None, telegram_id: int | None
     if email:
         by_email_user = get_remnawave_user_sync(email=email)
         fallback_telegram_id = by_email_user.get("telegram_id") if by_email_user else telegram_id
+        by_email_photo = _normalize_optional_text(by_email_user.get("photo")) if by_email_user else None
 
         # Делаем второй запрос только если email-поиск не дал фото, но есть Telegram ID.
-        if by_email_user and by_email_user.get("photo"):
+        if by_email_user and by_email_photo:
             return by_email_user
 
         if fallback_telegram_id is None:

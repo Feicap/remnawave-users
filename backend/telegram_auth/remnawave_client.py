@@ -19,6 +19,24 @@ def _first_non_empty(*values: Any) -> str:
     return ""
 
 
+def _find_first_non_empty(candidates: list[dict[str, Any]], keys: tuple[str, ...]) -> str:
+    for candidate in candidates:
+        for key in keys:
+            value = _first_non_empty(candidate.get(key))
+            if value:
+                return value
+    return ""
+
+
+def _find_first_optional_int(candidates: list[dict[str, Any]], keys: tuple[str, ...]) -> int | None:
+    for candidate in candidates:
+        for key in keys:
+            value = _parse_optional_int(candidate.get(key))
+            if value is not None:
+                return value
+    return None
+
+
 def _parse_optional_int(value: Any) -> int | None:
     if isinstance(value, bool) or value is None:
         return None
@@ -58,28 +76,36 @@ def _pick_first_user(payload: Any) -> dict[str, Any] | None:
 
 
 def _collect_nested_dicts(payload: Any) -> list[dict[str, Any]]:
-    result: list[dict[str, Any]] = []
-    stack: list[Any] = [payload]
+    telegram_candidates: list[dict[str, Any]] = []
+    regular_candidates: list[dict[str, Any]] = []
+    stack: list[tuple[Any, bool]] = [(payload, False)]
     seen: set[int] = set()
 
     while stack:
-        current = stack.pop()
+        current, in_telegram_branch = stack.pop()
         current_id = id(current)
         if current_id in seen:
             continue
         seen.add(current_id)
 
         if isinstance(current, dict):
-            result.append(current)
-            for value in current.values():
+            key_names = tuple(str(key).lower() for key in current.keys())
+            is_telegram_dict = in_telegram_branch or any("telegram" in key for key in key_names)
+
+            if is_telegram_dict:
+                telegram_candidates.append(current)
+            else:
+                regular_candidates.append(current)
+
+            for key, value in current.items():
                 if isinstance(value, (dict, list)):
-                    stack.append(value)
+                    stack.append((value, is_telegram_dict or ("telegram" in str(key).lower())))
         elif isinstance(current, list):
             for item in current:
                 if isinstance(item, (dict, list)):
-                    stack.append(item)
+                    stack.append((item, in_telegram_branch))
 
-    return result
+    return telegram_candidates + regular_candidates
 
 
 def normalize_remnawave_user(payload: Any) -> dict[str, Any] | None:
@@ -89,52 +115,53 @@ def normalize_remnawave_user(payload: Any) -> dict[str, Any] | None:
 
     candidates = _collect_nested_dicts(user)
 
-    email = _first_non_empty(*(candidate.get("email") for candidate in candidates)).lower()
+    email = _find_first_non_empty(candidates, ("email",)).lower()
 
-    telegram_id = next(
+    telegram_id = _find_first_optional_int(
+        candidates,
+        ("telegramId", "telegram_id", "telegramID", "telegramUserId", "telegram_user_id", "tgId", "tg_id"),
+    )
+
+    telegram_username = _find_first_non_empty(
+        candidates,
         (
-            value
-            for value in (
-                _parse_optional_int(candidate.get("telegramId") or candidate.get("telegram_id") or candidate.get("id"))
-                for candidate in candidates
-            )
-            if value is not None
+            "telegramUsername",
+            "telegram_username",
+            "telegramLogin",
+            "telegram_login",
+            "telegramNick",
+            "telegram_nick",
+            "username",
+            "login",
         ),
-        None,
     )
 
-    telegram_username = _first_non_empty(
-        *(
-            candidate.get("telegramUsername")
-            or candidate.get("telegram_username")
-            or candidate.get("telegramLogin")
-            or candidate.get("telegram_login")
-            or candidate.get("username")
-            for candidate in candidates
-        )
+    photo = _find_first_non_empty(
+        candidates,
+        (
+            "telegramPhotoUrl",
+            "telegram_photo_url",
+            "telegramAvatarUrl",
+            "telegram_avatar_url",
+            "telegramUserpic",
+            "telegram_userpic",
+            "photoUrl",
+            "photo_url",
+            "avatarUrl",
+            "avatar_url",
+            "userpicUrl",
+            "userpic_url",
+            "avatar",
+            "photo",
+            "userpic",
+            "imageUrl",
+            "image_url",
+            "profilePhotoUrl",
+            "profile_photo_url",
+        ),
     )
 
-    photo = _first_non_empty(
-        *(
-            candidate.get("photoUrl")
-            or candidate.get("photo_url")
-            or candidate.get("avatarUrl")
-            or candidate.get("avatar_url")
-            or candidate.get("avatar")
-            or candidate.get("photo")
-            or candidate.get("userpic")
-            for candidate in candidates
-        )
-    )
-
-    subscription_url = _first_non_empty(
-        *(
-            candidate.get("subscriptionUrl")
-            or candidate.get("subscription_url")
-            or candidate.get("url")
-            for candidate in candidates
-        )
-    )
+    subscription_url = _find_first_non_empty(candidates, ("subscriptionUrl", "subscription_url", "url"))
 
     return {
         "email": email or None,
