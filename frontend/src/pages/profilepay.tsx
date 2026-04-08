@@ -6,6 +6,9 @@ import type { PaymentProof } from '../types/payment'
 import { buildAuthHeaders, clearStoredAuth, getStoredUser } from '../utils/auth'
 import { isAdminUser } from '../utils/admin'
 
+const DEFAULT_AVATAR =
+  'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
+
 function statusIcon(status: PaymentProof['status']): { icon: string; className: string; label: string } {
   if (status === 'approved') {
     return { icon: 'check_circle', className: 'text-green-500', label: 'Подтверждено' }
@@ -28,6 +31,7 @@ export default function ProfilePay() {
   const imageBlobUrlsRef = useRef<string[]>([])
 
   const canViewAdminPanel = useMemo(() => (user ? isAdminUser(user) : false), [user])
+  const telegramId = typeof user?.telegram_id === 'number' && Number.isFinite(user.telegram_id) ? user.telegram_id : null
 
   const loadMyProofs = useCallback(async () => {
     if (!user) {
@@ -179,17 +183,22 @@ export default function ProfilePay() {
           </div>
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-3 px-3 py-2">
-              <div
-                className="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10"
-                style={{
-                  backgroundImage: `url("${user.photo || 'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfTQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'}")`,
-                }}
-              />
+              <div className="size-10 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
+                <img
+                  alt={user.username || 'avatar'}
+                  className="block h-full w-full object-cover"
+                  src={user.photo || DEFAULT_AVATAR}
+                />
+              </div>
               <div className="flex flex-col">
                 <h1 className="text-gray-900 dark:text-white text-base font-medium leading-normal">
                   {user.username || 'Пользователь'}
                 </h1>
-                <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">ID: {user.id}</p>
+                {telegramId !== null ? (
+                  <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">
+                    Telegram ID: {telegramId}
+                  </p>
+                ) : null}
               </div>
             </div>
 

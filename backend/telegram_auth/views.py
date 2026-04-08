@@ -99,6 +99,44 @@ def _build_auth_response(**kwargs) -> JsonResponse:
     return JsonResponse(payload)
 
 
+def _merge_remnawave_users(primary: dict | None, secondary: dict | None) -> dict | None:
+    if primary is None:
+        return secondary
+    if secondary is None:
+        return primary
+
+    merged = dict(primary)
+    for key in ("email", "telegram_id", "telegram_username", "photo", "subscription_url"):
+        if not merged.get(key) and secondary.get(key):
+            merged[key] = secondary.get(key)
+
+    if merged.get("raw") is None and secondary.get("raw") is not None:
+        merged["raw"] = secondary["raw"]
+
+    return merged
+
+
+def _resolve_remnawave_user(*, email: str | None = None, telegram_id: int | None = None) -> dict | None:
+    if not email and telegram_id is None:
+        return None
+
+    if email:
+        by_email_user = get_remnawave_user_sync(email=email)
+        fallback_telegram_id = by_email_user.get("telegram_id") if by_email_user else telegram_id
+
+        # Делаем второй запрос только если email-поиск не дал фото, но есть Telegram ID.
+        if by_email_user and by_email_user.get("photo"):
+            return by_email_user
+
+        if fallback_telegram_id is None:
+            return by_email_user
+
+        by_telegram_user = get_remnawave_user_sync(telegram_id=fallback_telegram_id)
+        return _merge_remnawave_users(by_email_user, by_telegram_user)
+
+    return get_remnawave_user_sync(telegram_id=telegram_id)
+
+
 def _parse_admin_ids() -> set[int]:
     raw = os.getenv("VITE_ADMIN") or os.getenv("ADMIN") or ""
     normalized = raw.strip().strip("[]")
@@ -175,7 +213,7 @@ def telegram_login(request: HttpRequest) -> JsonResponse:
     if time() - int(user.get("auth_date", 0)) > 86400:
         return JsonResponse({"error": "Auth expired"}, status=403)
 
-    remnawave_user = get_remnawave_user_sync(telegram_id=user["id"])
+    remnawave_user = _resolve_remnawave_user(telegram_id=user["id"])
     return _build_auth_response(
         user_id=user["id"],
         username=user.get("username") or "",
@@ -231,7 +269,7 @@ def email_register(request: HttpRequest) -> JsonResponse:
         email=email,
         password=password,
     )
-    remnawave_user = get_remnawave_user_sync(email=email)
+    remnawave_user = _resolve_remnawave_user(email=email)
     return _build_auth_response(
         user_id=user.id,
         username=user.email or user.username,
@@ -262,7 +300,7 @@ def email_login(request: HttpRequest) -> JsonResponse:
     if not user.check_password(password):
         return JsonResponse({"error": "Invalid password"}, status=403)
 
-    remnawave_user = get_remnawave_user_sync(email=email)
+    remnawave_user = _resolve_remnawave_user(email=email)
     return _build_auth_response(
         user_id=user.id,
         username=user.email or user.username,
@@ -280,11 +318,7 @@ def auth_me(request: HttpRequest) -> JsonResponse:
     if user_id is None:
         return JsonResponse({"error": "Unauthorized"}, status=401)
 
-    remnawave_user = None
-    if email:
-        remnawave_user = get_remnawave_user_sync(email=email)
-    elif telegram_id is not None:
-        remnawave_user = get_remnawave_user_sync(telegram_id=telegram_id)
+    remnawave_user = _resolve_remnawave_user(email=email, telegram_id=telegram_id)
 
     return _build_auth_response(
         user_id=user_id,

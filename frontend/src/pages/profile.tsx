@@ -11,6 +11,13 @@ function getDisplayName(user: AuthUser): string {
   return user.telegram_username || user.username || user.email || 'Пользователь'
 }
 
+function getTelegramId(user: AuthUser): number | null {
+  if (typeof user.telegram_id === 'number' && Number.isFinite(user.telegram_id)) {
+    return user.telegram_id
+  }
+  return null
+}
+
 export default function Profile() {
   const navigate = useNavigate()
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
@@ -67,6 +74,7 @@ export default function Profile() {
 
   const canViewAdminPanel = isAdminUser(user)
   const displayName = getDisplayName(user)
+  const telegramId = getTelegramId(user)
 
   return (
     <div className="flex min-h-screen flex-col md:h-screen md:flex-row">
@@ -82,7 +90,7 @@ export default function Profile() {
                 <div className="size-10 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
                   <img
                     alt={displayName}
-                    className="h-full w-full object-cover"
+                    className="block h-full w-full object-cover"
                     src={user.photo || DEFAULT_AVATAR}
                   />
                 </div>
@@ -91,13 +99,11 @@ export default function Profile() {
                   {user.email ? (
                     <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">{user.email}</p>
                   ) : null}
-                  {user.telegram_id ? (
+                  {telegramId !== null ? (
                     <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">
-                      Telegram ID: {user.telegram_id}
+                      Telegram ID: {telegramId}
                     </p>
-                  ) : (
-                    <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">ID: {user.id}</p>
-                  )}
+                  ) : null}
                 </div>
               </div>
               <nav className="flex flex-col gap-2">
@@ -178,10 +184,10 @@ export default function Profile() {
                 <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Почта</p>
                 <p className="text-base font-semibold text-gray-900 dark:text-white">{user.email || 'Не указана'}</p>
               </div>
-              <div className="rounded-xl bg-gray-50 p-4 dark:bg-[#1a2539]">
+              <div className={telegramId !== null ? 'rounded-xl bg-gray-50 p-4 dark:bg-[#1a2539]' : 'hidden'}>
                 <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Telegram ID</p>
                 <p className="text-base font-semibold text-gray-900 dark:text-white">
-                  {user.telegram_id ? String(user.telegram_id) : 'Не указан'}
+                  {telegramId !== null ? String(telegramId) : 'Не указан'}
                 </p>
               </div>
               <div className="rounded-xl bg-gray-50 p-4 dark:bg-[#1a2539]">
