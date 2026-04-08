@@ -11,6 +11,7 @@ from .views import (
     health_check,
     payment_proof_file,
     payment_proofs_collection,
+    telegram_avatar,
     telegram_login,
 )
 
@@ -20,6 +21,7 @@ urlpatterns = [
     path("auth/email/check/", email_check, name="email_check"),
     path("auth/email/login/", email_login, name="email_login"),
     path("auth/email/register/", email_register, name="email_register"),
+    path("auth/telegram-avatar/<int:telegram_id>/", telegram_avatar, name="telegram_avatar"),
     path("auth/telegram/", telegram_login, name="telegram_login"),
     path("payment-proofs/", payment_proofs_collection, name="payment_proofs_collection"),
     path("payment-proofs/<int:proof_id>/file/", payment_proof_file, name="payment_proof_file"),

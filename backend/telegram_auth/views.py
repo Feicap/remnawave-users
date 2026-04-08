@@ -14,7 +14,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .models import PaymentProof
 from .remnawave_client import get_remnawave_user_sync
-from .services import has_telegram_config, verify_telegram_auth
+from .services import get_telegram_avatar_bytes, has_telegram_config, verify_telegram_auth
 
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".svg"}
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
@@ -61,6 +61,10 @@ def _normalize_optional_text(value: object | None) -> str | None:
     return normalized or None
 
 
+def _telegram_avatar_proxy_url(telegram_id: int) -> str:
+    return f"/api/auth/telegram-avatar/{telegram_id}/"
+
+
 def _build_auth_payload(
     *,
     user_id: int,
@@ -84,6 +88,10 @@ def _build_auth_payload(
     resolved_subscription_url = _normalize_optional_text(remnawave_user.get("subscription_url")) or _normalize_optional_text(
         subscription_url
     )
+
+    # Для email-входа с привязанным Telegram всегда тянем актуальный аватар по telegram_id.
+    if auth_provider == "email" and resolved_telegram_id is not None:
+        resolved_photo = _telegram_avatar_proxy_url(resolved_telegram_id)
 
     display_username = resolved_telegram_username or resolved_email or username or ""
 
@@ -350,6 +358,20 @@ def auth_me(request: HttpRequest) -> JsonResponse:
         auth_provider=auth_provider or ("telegram" if telegram_id is not None and not email else "email"),
         remnawave_user=remnawave_user,
     )
+
+
+def telegram_avatar(request: HttpRequest, telegram_id: int) -> HttpResponse | JsonResponse:
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid method"}, status=405)
+
+    avatar_payload = get_telegram_avatar_bytes(telegram_id)
+    if avatar_payload is None:
+        return JsonResponse({"error": "Avatar not found"}, status=404)
+
+    content, content_type = avatar_payload
+    response = HttpResponse(content, content_type=content_type)
+    response["Cache-Control"] = "public, max-age=300"
+    return response
 
 
 def health_check(request: HttpRequest) -> JsonResponse:
