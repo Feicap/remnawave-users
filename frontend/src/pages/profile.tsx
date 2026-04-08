@@ -188,7 +188,7 @@ export default function Profile() {
             </button>
           </div>
 
-          <div className="mb-6 rounded-xl border border-gray-200 bg-white p-6 dark:border-[#324467] dark:bg-[#111722]">
+          <div className="hidden">
             <h2 className="mb-4 text-lg font-bold leading-tight tracking-[-0.015em] text-gray-900 dark:text-white">
               Данные аккаунта
             </h2>

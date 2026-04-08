@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import type { AuthUser } from '../types/auth'
 import type { PaymentProof, PaymentProofUser, PaymentStatus } from '../types/payment'
-import { buildAuthHeaders, clearStoredAuth, getStoredUser } from '../utils/auth'
+import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser } from '../utils/auth'
 import { isAdminUser } from '../utils/admin'
 
 function statusBadge(status: PaymentStatus): { label: string; className: string } {
@@ -15,9 +15,16 @@ function statusBadge(status: PaymentStatus): { label: string; className: string 
   return { label: 'Ожидает', className: 'text-gray-500 bg-gray-500/10' }
 }
 
+function getTelegramId(user: AuthUser): number | null {
+  if (typeof user.telegram_id === 'number' && Number.isFinite(user.telegram_id)) {
+    return user.telegram_id
+  }
+  return null
+}
+
 export default function AdminCheck() {
   const navigate = useNavigate()
-  const [user] = useState<AuthUser | null>(() => getStoredUser())
+  const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
   const [users, setUsers] = useState<PaymentProofUser[]>([])
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
   const [proofs, setProofs] = useState<PaymentProof[]>([])
@@ -66,6 +73,12 @@ export default function AdminCheck() {
       return
     }
 
+    refreshStoredAuthUser(user)
+      .then((nextUser) => setUser(nextUser))
+      .catch(() => {
+        // Оставляем данные из localStorage, если сейчас не удалось обновить профиль.
+      })
+
     Promise.all([loadUsers(), loadProofs()]).catch((e: unknown) => {
       setError(e instanceof Error ? e.message : 'Ошибка загрузки')
     })
@@ -76,7 +89,7 @@ export default function AdminCheck() {
       })
     }, 5000)
     return () => clearInterval(interval)
-  }, [navigate, user, loadUsers, loadProofs])
+  }, [navigate, user?.id, loadUsers, loadProofs])
 
   useEffect(() => {
     loadProofs().catch((e: unknown) => {
@@ -145,6 +158,8 @@ export default function AdminCheck() {
   if (!user || !isAdmin) {
     return <div>Loading...</div>
   }
+
+  const telegramId = getTelegramId(user)
 
   async function updateStatus(proofId: number, status: PaymentStatus) {
     if (!user) {
@@ -235,7 +250,14 @@ export default function AdminCheck() {
                 <h1 className="text-gray-900 dark:text-white text-base font-medium leading-normal">
                   {user.username || 'Администратор'}
                 </h1>
-                <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">ID: {user.id}</p>
+                {user.email ? (
+                  <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">{user.email}</p>
+                ) : null}
+                {telegramId !== null ? (
+                  <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">
+                    Telegram ID: {telegramId}
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>

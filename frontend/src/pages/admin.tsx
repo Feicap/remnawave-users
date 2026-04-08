@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
 import type { AuthUser } from '../types/auth'
-import { clearStoredAuth, getStoredUser } from '../utils/auth'
+import { clearStoredAuth, getStoredUser, refreshStoredAuthUser } from '../utils/auth'
 import { isAdminUser } from '../utils/admin'
 
 const env = import.meta.env as Record<string, string | undefined>
@@ -15,9 +15,16 @@ const ADMIN_ROWS = [
   { id: '@sam_wilson', plan: 'Премиум (месяц)', status: 'Скоро истекает', end: '2026-02-28', statusColor: 'text-yellow-500 bg-yellow-500/10' },
 ]
 
+function getTelegramId(user: AuthUser): number | null {
+  if (typeof user.telegram_id === 'number' && Number.isFinite(user.telegram_id)) {
+    return user.telegram_id
+  }
+  return null
+}
+
 export default function Admin() {
   const navigate = useNavigate()
-  const [user] = useState<AuthUser | null>(() => getStoredUser())
+  const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
 
   useEffect(() => {
     if (!user) {
@@ -27,12 +34,21 @@ export default function Admin() {
 
     if (!isAdminUser(user)) {
       navigate('/profile')
+      return
     }
-  }, [navigate, user])
+
+    refreshStoredAuthUser(user)
+      .then((nextUser) => setUser(nextUser))
+      .catch(() => {
+        // Оставляем данные из localStorage, если сейчас не удалось обновить профиль.
+      })
+  }, [navigate, user?.id])
 
   if (!user || !isAdminUser(user)) {
     return <div>Loading...</div>
   }
+
+  const telegramId = getTelegramId(user)
 
   function handleBackToProfile() {
     navigate('/profile')
@@ -67,7 +83,14 @@ export default function Admin() {
                 <h1 className="text-gray-900 dark:text-white text-base font-medium leading-normal">
                   {user.username || 'Администратор'}
                 </h1>
-                <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">ID: {user.id}</p>
+                {user.email ? (
+                  <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">{user.email}</p>
+                ) : null}
+                {telegramId !== null ? (
+                  <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">
+                    Telegram ID: {telegramId}
+                  </p>
+                ) : null}
               </div>
             </div>
             <nav className="flex flex-col gap-2">
