@@ -57,28 +57,83 @@ def _pick_first_user(payload: Any) -> dict[str, Any] | None:
     return None
 
 
+def _collect_nested_dicts(payload: Any) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    stack: list[Any] = [payload]
+    seen: set[int] = set()
+
+    while stack:
+        current = stack.pop()
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+
+        if isinstance(current, dict):
+            result.append(current)
+            for value in current.values():
+                if isinstance(value, (dict, list)):
+                    stack.append(value)
+        elif isinstance(current, list):
+            for item in current:
+                if isinstance(item, (dict, list)):
+                    stack.append(item)
+
+    return result
+
+
 def normalize_remnawave_user(payload: Any) -> dict[str, Any] | None:
     user = _pick_first_user(payload)
     if user is None:
         return None
 
-    email = _first_non_empty(user.get("email")).lower()
-    telegram_id = _parse_optional_int(user.get("telegramId") or user.get("telegram_id"))
+    candidates = _collect_nested_dicts(user)
+
+    email = _first_non_empty(*(candidate.get("email") for candidate in candidates)).lower()
+
+    telegram_id = next(
+        (
+            value
+            for value in (
+                _parse_optional_int(candidate.get("telegramId") or candidate.get("telegram_id") or candidate.get("id"))
+                for candidate in candidates
+            )
+            if value is not None
+        ),
+        None,
+    )
+
     telegram_username = _first_non_empty(
-        user.get("telegramUsername"),
-        user.get("telegram_username"),
-        user.get("username"),
+        *(
+            candidate.get("telegramUsername")
+            or candidate.get("telegram_username")
+            or candidate.get("telegramLogin")
+            or candidate.get("telegram_login")
+            or candidate.get("username")
+            for candidate in candidates
+        )
     )
+
     photo = _first_non_empty(
-        user.get("photoUrl"),
-        user.get("photo_url"),
-        user.get("avatarUrl"),
-        user.get("avatar_url"),
+        *(
+            candidate.get("photoUrl")
+            or candidate.get("photo_url")
+            or candidate.get("avatarUrl")
+            or candidate.get("avatar_url")
+            or candidate.get("avatar")
+            or candidate.get("photo")
+            or candidate.get("userpic")
+            for candidate in candidates
+        )
     )
+
     subscription_url = _first_non_empty(
-        user.get("subscriptionUrl"),
-        user.get("subscription_url"),
-        user.get("url"),
+        *(
+            candidate.get("subscriptionUrl")
+            or candidate.get("subscription_url")
+            or candidate.get("url")
+            for candidate in candidates
+        )
     )
 
     return {

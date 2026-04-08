@@ -79,12 +79,13 @@ export default function Profile() {
             </div>
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3 px-3 py-2">
-                <div
-                  className="size-10 rounded-full bg-cover bg-center bg-no-repeat"
-                  style={{
-                    backgroundImage: `url("${user.photo || DEFAULT_AVATAR}")`,
-                  }}
-                />
+                <div className="size-10 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
+                  <img
+                    alt={displayName}
+                    className="h-full w-full object-cover"
+                    src={user.photo || DEFAULT_AVATAR}
+                  />
+                </div>
                 <div className="flex flex-col">
                   <h1 className="text-base font-medium leading-normal text-gray-900 dark:text-white">{displayName}</h1>
                   {user.email ? (
@@ -227,7 +228,7 @@ export default function Profile() {
                 </p>
               ) : (
                 <p className="text-sm text-gray-500 dark:text-[#92a4c9]">
-                  Ссылка на подписку пока не назначена для этого аккаунта.
+                  Администратор не выдал вам доступ.
                 </p>
               )}
             </div>
