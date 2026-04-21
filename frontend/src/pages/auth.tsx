@@ -102,25 +102,6 @@ export default function Auth() {
     setIsSubmitting(true)
 
     try {
-      const checkRes = await fetch('/api/auth/email/check/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: normalizedEmail }),
-      })
-
-      if (!checkRes.ok) {
-        setError(await parseApiError(checkRes, 'Не удалось проверить почту'))
-        return
-      }
-
-      const checkData = (await checkRes.json()) as { exists: boolean }
-      if (!checkData.exists) {
-        navigate('/auth/create-account', {
-          state: { email: normalizedEmail, password },
-        })
-        return
-      }
-
       const loginRes = await fetch('/api/auth/email/login/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -128,6 +109,10 @@ export default function Auth() {
       })
 
       if (!loginRes.ok) {
+        if (loginRes.status === 404) {
+          setError('Аккаунт не зарегистрирован в базе. Нажмите "Регистрация".')
+          return
+        }
         setError(await parseApiError(loginRes, 'Не удалось войти'))
         return
       }
@@ -140,6 +125,15 @@ export default function Auth() {
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  function handleRegisterClick() {
+    navigate('/auth/create-account', {
+      state: {
+        email: normalizeEmail(email),
+        password,
+      },
+    })
   }
 
   return (
@@ -159,7 +153,7 @@ export default function Auth() {
                         Войдите по почте и паролю.
                       </p>
                       <p className="text-sm leading-normal text-slate-500 dark:text-[#92a4c9]">
-                        Если такой почты ещё нет, мы переведём вас на страницу создания аккаунта.
+                        Если аккаунт ещё не создан, нажмите кнопку Регистрация.
                       </p>
                     </div>
 
@@ -190,13 +184,23 @@ export default function Auth() {
 
                       {error ? <p className="text-sm text-red-500">{error}</p> : null}
 
-                      <button
-                        className="flex h-12 w-full items-center justify-center rounded-lg bg-primary px-4 text-sm font-bold tracking-[0.015em] text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-                        disabled={isSubmitting}
-                        type="submit"
-                      >
-                        {isSubmitting ? 'Проверяем...' : 'Войти'}
-                      </button>
+                      <div className="flex flex-col gap-3 pt-2 sm:flex-row">
+                        <button
+                          className="flex h-12 flex-1 items-center justify-center rounded-lg bg-primary px-4 text-sm font-bold tracking-[0.015em] text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={isSubmitting}
+                          type="submit"
+                        >
+                          {isSubmitting ? 'Проверяем...' : 'Войти'}
+                        </button>
+                        <button
+                          className="flex h-12 flex-1 items-center justify-center rounded-lg border border-slate-200 px-4 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-white dark:hover:bg-[#111722]"
+                          disabled={isSubmitting}
+                          onClick={handleRegisterClick}
+                          type="button"
+                        >
+                          Регистрация
+                        </button>
+                      </div>
                     </form>
                   </div>
 

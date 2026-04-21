@@ -1,7 +1,7 @@
 import json
 import mimetypes
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import time
 
@@ -10,6 +10,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
 from django.db.models import Count, Max, Q
+from django.utils import timezone as dj_timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from .models import PaymentProof
@@ -18,6 +19,8 @@ from .services import get_telegram_avatar_bytes, has_telegram_config, verify_tel
 
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".svg"}
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
+ONLINE_WINDOW_MINUTES = max(1, int(os.getenv("ADMIN_ONLINE_WINDOW_MINUTES", "15")))
+DEFAULT_ADMIN_USERS_PAGE_SIZE = 200
 
 
 def _normalize_email(value: str) -> str:
@@ -41,6 +44,16 @@ def _validate_email_credentials(payload: dict) -> tuple[str | None, str | None, 
 
 def _find_user_by_email(email: str) -> User | None:
     return User.objects.filter(Q(email__iexact=email) | Q(username__iexact=email)).first()
+
+
+def _find_user_by_id_or_email(*, user_id: int | None = None, email: str | None = None) -> User | None:
+    if user_id is not None:
+        user_by_id = User.objects.filter(id=user_id).first()
+        if user_by_id is not None:
+            return user_by_id
+    if email:
+        return _find_user_by_email(email)
+    return None
 
 
 def _parse_optional_int(value: str) -> int | None:
@@ -116,6 +129,14 @@ def _build_auth_payload(
 def _build_auth_response(**kwargs) -> JsonResponse:
     payload = _build_auth_payload(**kwargs)
     return JsonResponse(payload)
+
+
+def _touch_user_last_login(*, user_id: int | None = None, email: str | None = None) -> None:
+    user = _find_user_by_id_or_email(user_id=user_id, email=email)
+    if user is None:
+        return
+    user.last_login = dj_timezone.now()
+    user.save(update_fields=["last_login"])
 
 
 def _merge_remnawave_users(primary: dict | None, secondary: dict | None) -> dict | None:
@@ -222,6 +243,29 @@ def _serialize_proof(proof: PaymentProof) -> dict:
     }
 
 
+def _is_online(last_login: datetime | None, online_after: datetime) -> bool:
+    return last_login is not None and last_login >= online_after
+
+
+def _serialize_admin_user(user: User, *, online_after: datetime) -> dict:
+    normalized_email = _normalize_email(user.email or user.username or "")
+    remnawave_user = _resolve_remnawave_user(email=normalized_email) if normalized_email else None
+    subscription_url = _normalize_optional_text((remnawave_user or {}).get("subscription_url"))
+    has_remnawave_access = bool(subscription_url)
+
+    return {
+        "id": user.id,
+        "login": user.username,
+        "email": user.email,
+        "date_joined": user.date_joined.isoformat() if user.date_joined else None,
+        "last_login": user.last_login.isoformat() if user.last_login else None,
+        "is_online": _is_online(user.last_login, online_after),
+        "has_password": user.has_usable_password(),
+        "has_remnawave_access": has_remnawave_access,
+        "subscription_url": subscription_url or "",
+    }
+
+
 @csrf_exempt
 def telegram_login(request: HttpRequest) -> JsonResponse:
     if request.method != "POST":
@@ -289,14 +333,32 @@ def email_register(request: HttpRequest) -> JsonResponse:
     if len(password) < 6:
         return JsonResponse({"error": "Password must be at least 6 characters"}, status=400)
 
-    if _find_user_by_email(email) is not None:
-        return JsonResponse({"error": "Email already exists"}, status=409)
+    existing_user = _find_user_by_email(email)
+    if existing_user is not None:
+        if existing_user.has_usable_password():
+            return JsonResponse({"error": "Email already exists"}, status=409)
+
+        existing_user.username = email
+        existing_user.email = email
+        existing_user.set_password(password)
+        existing_user.last_login = dj_timezone.now()
+        existing_user.save(update_fields=["username", "email", "password", "last_login"])
+
+        remnawave_user = _resolve_remnawave_user(email=email)
+        return _build_auth_response(
+            user_id=existing_user.id,
+            username=existing_user.email or existing_user.username,
+            email=existing_user.email or existing_user.username,
+            auth_provider="email",
+            remnawave_user=remnawave_user,
+        )
 
     user = User.objects.create_user(
         username=email,
         email=email,
         password=password,
     )
+    _touch_user_last_login(user_id=user.id)
     remnawave_user = _resolve_remnawave_user(email=email)
     return _build_auth_response(
         user_id=user.id,
@@ -328,6 +390,7 @@ def email_login(request: HttpRequest) -> JsonResponse:
     if not user.check_password(password):
         return JsonResponse({"error": "Invalid password"}, status=403)
 
+    _touch_user_last_login(user_id=user.id)
     remnawave_user = _resolve_remnawave_user(email=email)
     return _build_auth_response(
         user_id=user.id,
@@ -348,16 +411,21 @@ def auth_me(request: HttpRequest) -> JsonResponse:
 
     remnawave_user = _resolve_remnawave_user(email=email, telegram_id=telegram_id)
 
-    return _build_auth_response(
+    resolved_auth_provider = auth_provider or ("telegram" if telegram_id is not None and not email else "email")
+
+    response = _build_auth_response(
         user_id=user_id,
         username=username,
         photo=photo,
         email=email,
         telegram_id=telegram_id,
         telegram_username=telegram_username or (username if auth_provider == "telegram" else None),
-        auth_provider=auth_provider or ("telegram" if telegram_id is not None and not email else "email"),
+        auth_provider=resolved_auth_provider,
         remnawave_user=remnawave_user,
     )
+    if resolved_auth_provider == "email":
+        _touch_user_last_login(user_id=user_id, email=email)
+    return response
 
 
 def telegram_avatar(request: HttpRequest, telegram_id: int) -> HttpResponse | JsonResponse:
@@ -472,6 +540,56 @@ def admin_payment_proof_users(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"items": items})
 
 
+def admin_users(request: HttpRequest) -> JsonResponse:
+    user_id, _ = _extract_auth_user(request)
+    _, _, telegram_id, _, _, _, _ = _extract_auth_identity(request)
+    if user_id is None:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+    if not _is_admin_identity(user_id, telegram_id):
+        return JsonResponse({"error": "Forbidden"}, status=403)
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid method"}, status=405)
+
+    raw_limit = request.GET.get("limit", str(DEFAULT_ADMIN_USERS_PAGE_SIZE)).strip()
+    raw_offset = request.GET.get("offset", "0").strip()
+    if not raw_limit.isdigit() or not raw_offset.isdigit():
+        return JsonResponse({"error": "limit and offset must be positive integers"}, status=400)
+
+    limit = max(1, min(500, int(raw_limit)))
+    offset = int(raw_offset)
+    online_after = dj_timezone.now() - timedelta(minutes=ONLINE_WINDOW_MINUTES)
+
+    users_queryset = User.objects.all().order_by("-last_login", "-date_joined", "id")
+    total_users = users_queryset.count()
+    users = list(users_queryset[offset : offset + limit])
+
+    items = [_serialize_admin_user(user, online_after=online_after) for user in users]
+    remnawave_access_users = sum(1 for item in items if item["has_remnawave_access"])
+    online_users = User.objects.filter(last_login__gte=online_after).count()
+    users_without_password = User.objects.filter(password__startswith="!").count()
+    today_start = dj_timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    active_today = User.objects.filter(last_login__gte=today_start).count()
+
+    return JsonResponse(
+        {
+            "items": items,
+            "metrics": {
+                "total_users": total_users,
+                "online_users": online_users,
+                "online_window_minutes": ONLINE_WINDOW_MINUTES,
+                "remnawave_access_users": remnawave_access_users,
+                "users_without_password": users_without_password,
+                "active_today": active_today,
+            },
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + len(items) < total_users,
+            },
+        }
+    )
+
+
 def admin_payment_proofs(request: HttpRequest) -> JsonResponse:
     user_id, _ = _extract_auth_user(request)
     _, _, telegram_id, _, _, _, _ = _extract_auth_identity(request)
@@ -493,6 +611,93 @@ def admin_payment_proofs(request: HttpRequest) -> JsonResponse:
         item["file_url"] = f"/api/payment-proofs/{proof.id}/file/"
         items.append(item)
     return JsonResponse({"items": items})
+
+
+@csrf_exempt
+def admin_update_user_credentials(request: HttpRequest, target_user_id: int) -> JsonResponse:
+    user_id, _ = _extract_auth_user(request)
+    _, _, telegram_id, _, _, _, _ = _extract_auth_identity(request)
+    if user_id is None:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+    if not _is_admin_identity(user_id, telegram_id):
+        return JsonResponse({"error": "Forbidden"}, status=403)
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Invalid method"}, status=405)
+
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    try:
+        user = User.objects.get(id=target_user_id)
+    except User.DoesNotExist:
+        return JsonResponse({"error": "User not found"}, status=404)
+
+    next_login = payload.get("login")
+    next_password = payload.get("password")
+    update_login = next_login is not None
+    update_password = next_password is not None
+
+    if not update_login and not update_password:
+        return JsonResponse({"error": "Nothing to update"}, status=400)
+
+    updated_fields: list[str] = []
+
+    if update_login:
+        normalized_login = _normalize_email(str(next_login))
+        try:
+            validate_email(normalized_login)
+        except ValidationError:
+            return JsonResponse({"error": "Invalid login/email"}, status=400)
+
+        conflict = (
+            User.objects.filter(Q(email__iexact=normalized_login) | Q(username__iexact=normalized_login))
+            .exclude(id=target_user_id)
+            .exists()
+        )
+        if conflict:
+            return JsonResponse({"error": "Login already used by another account"}, status=409)
+
+        user.username = normalized_login
+        user.email = normalized_login
+        updated_fields.extend(["username", "email"])
+
+    if update_password:
+        password = str(next_password)
+        if len(password) < 6:
+            return JsonResponse({"error": "Password must be at least 6 characters"}, status=400)
+        user.set_password(password)
+        updated_fields.append("password")
+
+    user.save(update_fields=updated_fields)
+    online_after = dj_timezone.now() - timedelta(minutes=ONLINE_WINDOW_MINUTES)
+    return JsonResponse(_serialize_admin_user(user, online_after=online_after))
+
+
+@csrf_exempt
+def admin_reset_user_password(request: HttpRequest, target_user_id: int) -> JsonResponse:
+    user_id, _ = _extract_auth_user(request)
+    _, _, telegram_id, _, _, _, _ = _extract_auth_identity(request)
+    if user_id is None:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+    if not _is_admin_identity(user_id, telegram_id):
+        return JsonResponse({"error": "Forbidden"}, status=403)
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid method"}, status=405)
+
+    try:
+        user = User.objects.get(id=target_user_id)
+    except User.DoesNotExist:
+        return JsonResponse({"error": "User not found"}, status=404)
+
+    user.set_unusable_password()
+    user.save(update_fields=["password"])
+
+    online_after = dj_timezone.now() - timedelta(minutes=ONLINE_WINDOW_MINUTES)
+    payload = _serialize_admin_user(user, online_after=online_after)
+    payload["re_register_required"] = True
+    return JsonResponse(payload)
 
 
 @csrf_exempt

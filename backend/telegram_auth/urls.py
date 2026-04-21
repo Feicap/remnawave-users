@@ -3,7 +3,10 @@ from django.urls import path
 from .views import (
     admin_payment_proof_users,
     admin_payment_proofs,
+    admin_reset_user_password,
     admin_update_payment_proof,
+    admin_update_user_credentials,
+    admin_users,
     auth_me,
     email_check,
     email_login,
@@ -28,4 +31,7 @@ urlpatterns = [
     path("admin/payment-proofs/users/", admin_payment_proof_users, name="admin_payment_proof_users"),
     path("admin/payment-proofs/", admin_payment_proofs, name="admin_payment_proofs"),
     path("admin/payment-proofs/<int:proof_id>/", admin_update_payment_proof, name="admin_update_payment_proof"),
+    path("admin/users/", admin_users, name="admin_users"),
+    path("admin/users/<int:target_user_id>/", admin_update_user_credentials, name="admin_update_user_credentials"),
+    path("admin/users/<int:target_user_id>/reset-password/", admin_reset_user_password, name="admin_reset_user_password"),
 ]
