@@ -1,8 +1,11 @@
 import os
 from unittest.mock import patch
 
+from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 
+from telegram_auth.models import ChatUserProfile
 from telegram_auth import views
 
 
@@ -185,3 +188,77 @@ class ChatApiTests(TestCase):
         search_items = search_response.json()["items"]
         self.assertEqual(len(search_items), 1)
         self.assertEqual(search_items[0]["body"], "message 4")
+
+
+class AuthIdentityBindingTests(TestCase):
+    @patch("telegram_auth.views._resolve_remnawave_user")
+    @patch("telegram_auth.views.verify_telegram_auth", return_value=True)
+    @patch("telegram_auth.views.has_telegram_config", return_value=True)
+    def test_telegram_login_uses_existing_email_account(
+        self,
+        _has_telegram_config,
+        _verify_telegram_auth,
+        mock_resolve_remnawave,
+    ):
+        user = User.objects.create_user(username="bind@example.com", email="bind@example.com", password="secret123")
+        mock_resolve_remnawave.return_value = {
+            "email": "bind@example.com",
+            "telegram_id": 555001,
+            "telegram_username": "bind_user",
+        }
+
+        response = self.client.post(
+            "/api/auth/telegram/",
+            data={"id": 555001, "username": "bind_user", "auth_date": str(int(views.time()))},
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["id"], user.id)
+        self.assertEqual(payload["telegram_id"], 555001)
+
+        profile = ChatUserProfile.objects.get(user_id=user.id)
+        self.assertEqual(profile.telegram_id, 555001)
+        self.assertEqual(profile.email, "bind@example.com")
+
+    def test_profile_settings_with_email_and_telegram_headers_updates_single_profile(self):
+        user = User.objects.create_user(username="single@example.com", email="single@example.com", password="secret123")
+
+        stale_profile = ChatUserProfile.objects.create(
+            user_id=777001,
+            telegram_id=777001,
+            username="legacy",
+            email="",
+            auth_provider="telegram",
+        )
+        self.assertEqual(stale_profile.telegram_id, 777001)
+
+        headers = {
+            "HTTP_X_AUTH_USER_ID": "777001",
+            "HTTP_X_AUTH_USERNAME": "legacy_user",
+            "HTTP_X_AUTH_EMAIL": "single@example.com",
+            "HTTP_X_AUTH_TELEGRAM_ID": "777001",
+            "HTTP_X_AUTH_TELEGRAM_USERNAME": "legacy_user",
+            "HTTP_X_AUTH_PROVIDER": "telegram",
+            "HTTP_X_TELEGRAM_USER_ID": "777001",
+            "HTTP_X_TELEGRAM_USERNAME": "legacy_user",
+        }
+        avatar = SimpleUploadedFile("avatar.png", b"fakepngcontent", content_type="image/png")
+        response = self.client.patch(
+            "/api/profile/settings/",
+            data={"display_name": "zzz", "avatar": avatar},
+            **headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["id"], user.id)
+        self.assertEqual(payload["display_name"], "zzz")
+
+        profile = ChatUserProfile.objects.get(user_id=user.id)
+        self.assertEqual(profile.telegram_id, 777001)
+        self.assertEqual(profile.display_name, "zzz")
+        self.assertTrue(bool(profile.avatar_file))
+
+        stale_profile.refresh_from_db()
+        self.assertIsNone(stale_profile.telegram_id)

@@ -50,14 +50,7 @@ export default function Profile() {
     }
 
     refreshStoredAuthUser(user)
-      .then((nextUser) => {
-        setUser((previous) => ({
-          ...nextUser,
-          photo: previous?.photo?.includes('/api/profile/avatar/')
-            ? withStoredAvatarVersion(nextUser.photo)
-            : nextUser.photo,
-        }))
-      })
+      .then((nextUser) => setUser(nextUser))
       .catch(() => {
         // Оставляем данные из localStorage, если сейчас не удалось обновить профиль.
       })

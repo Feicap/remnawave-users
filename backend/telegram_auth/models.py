@@ -36,6 +36,7 @@ class PaymentProof(models.Model):
 
 class ChatUserProfile(models.Model):
     user_id = models.BigIntegerField(unique=True, db_index=True)
+    telegram_id = models.BigIntegerField(null=True, blank=True, unique=True, db_index=True)
     display_name = models.CharField(max_length=255, blank=True, default="")
     username = models.CharField(max_length=255, blank=True, default="")
     email = models.CharField(max_length=255, blank=True, default="")

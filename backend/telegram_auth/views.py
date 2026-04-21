@@ -66,6 +66,89 @@ def _find_user_by_id_or_email(*, user_id: int | None = None, email: str | None =
     return None
 
 
+def _find_profile_by_telegram_id(telegram_id: int | None) -> ChatUserProfile | None:
+    if telegram_id is None:
+        return None
+    return ChatUserProfile.objects.filter(telegram_id=telegram_id).first()
+
+
+def _parse_optional_any_int(value: object | None) -> int | None:
+    if value is None:
+        return None
+    return _parse_optional_int(str(value))
+
+
+def _build_unique_telegram_login(telegram_id: int) -> str:
+    base = f"tg_{telegram_id}"
+    candidate = base
+    suffix = 1
+    while User.objects.filter(username__iexact=candidate).exists():
+        suffix += 1
+        candidate = f"{base}_{suffix}"
+    return candidate
+
+
+def _ensure_auth_user(
+    *,
+    user_id_hint: int | None,
+    email: str | None,
+    telegram_id: int | None,
+) -> User | None:
+    user_by_email = _find_user_by_email(email) if email else None
+    profile_by_telegram = _find_profile_by_telegram_id(telegram_id)
+    user_by_telegram = User.objects.filter(id=profile_by_telegram.user_id).first() if profile_by_telegram else None
+    user_by_hint = User.objects.filter(id=user_id_hint).first() if user_id_hint is not None else None
+    legacy_profile = ChatUserProfile.objects.filter(user_id=user_id_hint).first() if user_id_hint is not None else None
+
+    user = user_by_email or user_by_telegram or user_by_hint
+    if user is None:
+        if email:
+            login = email
+        elif telegram_id is not None:
+            login = _build_unique_telegram_login(telegram_id)
+        else:
+            return None
+
+        should_preserve_legacy_id = (
+            user_id_hint is not None
+            and legacy_profile is not None
+            and User.objects.filter(id=user_id_hint).first() is None
+        )
+        user = User(id=user_id_hint, username=login, email=email or "") if should_preserve_legacy_id else User(
+            username=login,
+            email=email or "",
+        )
+        user.set_unusable_password()
+        if should_preserve_legacy_id:
+            try:
+                user.save(force_insert=True)
+            except IntegrityError:
+                user.id = None
+                user.save()
+        else:
+            user.save()
+
+    normalized_email = _normalize_email(email) if email else ""
+    update_fields: list[str] = []
+    if normalized_email and user.email.lower() != normalized_email:
+        user.email = normalized_email
+        update_fields.append("email")
+
+    if normalized_email and (not user.username or user.username.startswith("tg_")):
+        has_conflict = (
+            User.objects.filter(Q(username__iexact=normalized_email) | Q(email__iexact=normalized_email))
+            .exclude(id=user.id)
+            .exists()
+        )
+        if not has_conflict and user.username != normalized_email:
+            user.username = normalized_email
+            update_fields.append("username")
+
+    if update_fields:
+        user.save(update_fields=list(dict.fromkeys(update_fields)))
+    return user
+
+
 def _parse_optional_int(value: str) -> int | None:
     cleaned = value.strip()
     if not cleaned:
@@ -290,6 +373,7 @@ def _serialize_admin_user(user: User, *, online_after: datetime) -> dict:
     chat_username = ""
     chat_email = ""
     chat_telegram_username = ""
+    chat_telegram_id: int | None = None
     chat_auth_provider = ""
     chat_photo = ""
     if chat_profile is not None:
@@ -298,6 +382,7 @@ def _serialize_admin_user(user: User, *, online_after: datetime) -> dict:
         chat_username = chat_profile.username
         chat_email = chat_profile.email
         chat_telegram_username = chat_profile.telegram_username
+        chat_telegram_id = chat_profile.telegram_id
         chat_auth_provider = chat_profile.auth_provider
         chat_photo = chat_profile.photo
 
@@ -316,6 +401,7 @@ def _serialize_admin_user(user: User, *, online_after: datetime) -> dict:
         "chat_username": chat_username,
         "chat_email": chat_email,
         "chat_telegram_username": chat_telegram_username,
+        "chat_telegram_id": chat_telegram_id,
         "chat_auth_provider": chat_auth_provider,
         "chat_photo": chat_photo,
     }
@@ -346,6 +432,7 @@ def _upsert_chat_profile(
     user_id: int | None,
     username: str = "",
     email: str | None = None,
+    telegram_id: int | None = None,
     telegram_username: str = "",
     photo: str | None = None,
     auth_provider: str = "",
@@ -357,14 +444,17 @@ def _upsert_chat_profile(
     profile, _ = ChatUserProfile.objects.get_or_create(user_id=user_id)
     update_fields: list[str] = []
 
-    def _set_if_changed(field: str, value: str) -> None:
+    def _set_if_changed(field: str, value: object) -> None:
         nonlocal update_fields
         if getattr(profile, field) != value:
             setattr(profile, field, value)
             update_fields.append(field)
 
     _set_if_changed("username", username[:255])
-    _set_if_changed("email", (email or "")[:255])
+    _set_if_changed("email", _normalize_email(email)[:255] if email else "")
+    if telegram_id is not None and profile.telegram_id != telegram_id:
+        ChatUserProfile.objects.filter(telegram_id=telegram_id).exclude(user_id=user_id).update(telegram_id=None)
+        _set_if_changed("telegram_id", telegram_id)
     _set_if_changed("telegram_username", telegram_username[:255])
     _set_if_changed("auth_provider", auth_provider[:32])
     if photo is not None:
@@ -658,10 +748,22 @@ def _serialize_profile_settings(*, user_id: int, profile: ChatUserProfile, teleg
         "username": display_name,
         "photo": _chat_profile_avatar_url(profile),
         "email": email,
-        "telegram_id": telegram_id,
+        "telegram_id": profile.telegram_id if profile.telegram_id is not None else telegram_id,
         "telegram_username": profile.telegram_username,
         "auth_provider": profile.auth_provider or "email",
     }
+
+
+def _apply_profile_to_auth_payload(payload: dict, profile: ChatUserProfile) -> dict:
+    if profile.display_name:
+        payload["username"] = profile.display_name
+    avatar_url = _chat_profile_avatar_url(profile)
+    if avatar_url:
+        payload["photo"] = avatar_url
+    if profile.telegram_id is not None:
+        payload["telegram_id"] = profile.telegram_id
+    payload["display_name"] = profile.display_name
+    return payload
 
 
 @csrf_exempt
@@ -684,15 +786,36 @@ def telegram_login(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Auth expired"}, status=403)
 
     remnawave_user = _resolve_remnawave_user(telegram_id=user["id"])
-    return _build_auth_response(
-        user_id=user["id"],
+    resolved_email = _normalize_optional_text((remnawave_user or {}).get("email"))
+    auth_user = _ensure_auth_user(
+        user_id_hint=_parse_optional_any_int(user.get("id")),
+        email=_normalize_email(resolved_email) if resolved_email else None,
+        telegram_id=_parse_optional_any_int(user.get("id")),
+    )
+    if auth_user is None:
+        return JsonResponse({"error": "Unable to resolve account"}, status=500)
+
+    response = _build_auth_response(
+        user_id=auth_user.id,
         username=user.get("username") or "",
         photo=user.get("photo_url") or "",
+        email=auth_user.email or resolved_email,
         telegram_id=user["id"],
         telegram_username=user.get("username") or None,
         auth_provider="telegram",
         remnawave_user=remnawave_user,
     )
+    response_payload = json.loads(response.content)
+    profile = _upsert_chat_profile(
+        user_id=auth_user.id,
+        username=response_payload.get("username", "") or (auth_user.email or auth_user.username or ""),
+        email=response_payload.get("email") or auth_user.email or resolved_email,
+        telegram_id=_parse_optional_any_int(user.get("id")),
+        telegram_username=response_payload.get("telegram_username", "") or user.get("username") or "",
+        photo=response_payload.get("photo", "") or user.get("photo_url") or "",
+        auth_provider="telegram",
+    )
+    return JsonResponse(_apply_profile_to_auth_payload(response_payload, profile))
 
 
 @csrf_exempt
@@ -743,13 +866,26 @@ def email_register(request: HttpRequest) -> JsonResponse:
         existing_user.save(update_fields=["username", "email", "password", "last_login"])
 
         remnawave_user = _resolve_remnawave_user(email=email)
-        return _build_auth_response(
+        remnawave_telegram_id = _parse_optional_any_int((remnawave_user or {}).get("telegram_id"))
+        profile = _upsert_chat_profile(
             user_id=existing_user.id,
             username=existing_user.email or existing_user.username,
             email=existing_user.email or existing_user.username,
+            telegram_id=remnawave_telegram_id,
+            telegram_username=_normalize_optional_text((remnawave_user or {}).get("telegram_username")) or "",
+            photo=_normalize_optional_text((remnawave_user or {}).get("photo")) or "",
             auth_provider="email",
-            remnawave_user=remnawave_user,
         )
+        payload = json.loads(
+            _build_auth_response(
+                user_id=existing_user.id,
+                username=existing_user.email or existing_user.username,
+                email=existing_user.email or existing_user.username,
+                auth_provider="email",
+                remnawave_user=remnawave_user,
+            ).content
+        )
+        return JsonResponse(_apply_profile_to_auth_payload(payload, profile))
 
     user = User.objects.create_user(
         username=email,
@@ -758,13 +894,26 @@ def email_register(request: HttpRequest) -> JsonResponse:
     )
     _touch_user_last_login(user_id=user.id)
     remnawave_user = _resolve_remnawave_user(email=email)
-    return _build_auth_response(
+    remnawave_telegram_id = _parse_optional_any_int((remnawave_user or {}).get("telegram_id"))
+    profile = _upsert_chat_profile(
         user_id=user.id,
         username=user.email or user.username,
         email=user.email or user.username,
+        telegram_id=remnawave_telegram_id,
+        telegram_username=_normalize_optional_text((remnawave_user or {}).get("telegram_username")) or "",
+        photo=_normalize_optional_text((remnawave_user or {}).get("photo")) or "",
         auth_provider="email",
-        remnawave_user=remnawave_user,
     )
+    payload = json.loads(
+        _build_auth_response(
+            user_id=user.id,
+            username=user.email or user.username,
+            email=user.email or user.username,
+            auth_provider="email",
+            remnawave_user=remnawave_user,
+        ).content
+    )
+    return JsonResponse(_apply_profile_to_auth_payload(payload, profile))
 
 
 @csrf_exempt
@@ -790,13 +939,26 @@ def email_login(request: HttpRequest) -> JsonResponse:
 
     _touch_user_last_login(user_id=user.id)
     remnawave_user = _resolve_remnawave_user(email=email)
-    return _build_auth_response(
+    remnawave_telegram_id = _parse_optional_any_int((remnawave_user or {}).get("telegram_id"))
+    profile = _upsert_chat_profile(
         user_id=user.id,
         username=user.email or user.username,
         email=user.email or user.username,
+        telegram_id=remnawave_telegram_id,
+        telegram_username=_normalize_optional_text((remnawave_user or {}).get("telegram_username")) or "",
+        photo=_normalize_optional_text((remnawave_user or {}).get("photo")) or "",
         auth_provider="email",
-        remnawave_user=remnawave_user,
     )
+    payload = json.loads(
+        _build_auth_response(
+            user_id=user.id,
+            username=user.email or user.username,
+            email=user.email or user.username,
+            auth_provider="email",
+            remnawave_user=remnawave_user,
+        ).content
+    )
+    return JsonResponse(_apply_profile_to_auth_payload(payload, profile))
 
 
 def auth_me(request: HttpRequest) -> JsonResponse:
@@ -804,18 +966,21 @@ def auth_me(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Invalid method"}, status=405)
 
     user_id, email, telegram_id, username, telegram_username, photo, auth_provider = _extract_auth_identity(request)
-    if user_id is None:
+    auth_user = _ensure_auth_user(user_id_hint=user_id, email=email, telegram_id=telegram_id)
+    if auth_user is None:
         return JsonResponse({"error": "Unauthorized"}, status=401)
+    resolved_user_id = auth_user.id
+    resolved_email = _normalize_email(auth_user.email) if auth_user.email else email
 
-    remnawave_user = _resolve_remnawave_user(email=email, telegram_id=telegram_id)
+    remnawave_user = _resolve_remnawave_user(email=resolved_email, telegram_id=telegram_id)
 
-    resolved_auth_provider = auth_provider or ("telegram" if telegram_id is not None and not email else "email")
+    resolved_auth_provider = auth_provider or ("telegram" if telegram_id is not None and not resolved_email else "email")
 
     response = _build_auth_response(
-        user_id=user_id,
+        user_id=resolved_user_id,
         username=username,
         photo=photo,
-        email=email,
+        email=resolved_email,
         telegram_id=telegram_id,
         telegram_username=telegram_username or (username if auth_provider == "telegram" else None),
         auth_provider=resolved_auth_provider,
@@ -823,41 +988,41 @@ def auth_me(request: HttpRequest) -> JsonResponse:
     )
     response_payload = json.loads(response.content)
     profile = _upsert_chat_profile(
-        user_id=user_id,
+        user_id=resolved_user_id,
         username=response_payload.get("username", "") or username,
-        email=response_payload.get("email") or email,
+        email=response_payload.get("email") or resolved_email,
+        telegram_id=telegram_id,
         telegram_username=response_payload.get("telegram_username", "") or telegram_username,
         photo=response_payload.get("photo", "") or photo,
         auth_provider=response_payload.get("auth_provider", "") or resolved_auth_provider,
     )
-    if profile.display_name:
-        response_payload["username"] = profile.display_name
-    avatar_url = _chat_profile_avatar_url(profile)
-    if avatar_url:
-        response_payload["photo"] = avatar_url
-    response_payload["display_name"] = profile.display_name
+    response_payload = _apply_profile_to_auth_payload(response_payload, profile)
     if resolved_auth_provider == "email":
-        _touch_user_last_login(user_id=user_id, email=email)
+        _touch_user_last_login(user_id=resolved_user_id, email=resolved_email)
     return JsonResponse(response_payload)
 
 
 @csrf_exempt
 def profile_settings(request: HttpRequest) -> JsonResponse:
     user_id, email, telegram_id, username, telegram_username, photo, auth_provider = _extract_auth_identity(request)
-    if user_id is None:
+    auth_user = _ensure_auth_user(user_id_hint=user_id, email=email, telegram_id=telegram_id)
+    if auth_user is None:
         return JsonResponse({"error": "Unauthorized"}, status=401)
+    resolved_user_id = auth_user.id
+    resolved_email = _normalize_email(auth_user.email) if auth_user.email else email
 
     profile = _upsert_chat_profile(
-        user_id=user_id,
+        user_id=resolved_user_id,
         username=username,
-        email=email,
+        email=resolved_email,
+        telegram_id=telegram_id,
         telegram_username=telegram_username,
         photo=photo,
         auth_provider=auth_provider or ("telegram" if telegram_id is not None else "email"),
     )
 
     if request.method == "GET":
-        return JsonResponse(_serialize_profile_settings(user_id=user_id, profile=profile, telegram_id=telegram_id))
+        return JsonResponse(_serialize_profile_settings(user_id=resolved_user_id, profile=profile, telegram_id=telegram_id))
 
     if request.method != "PATCH":
         return JsonResponse({"error": "Invalid method"}, status=405)
@@ -879,7 +1044,7 @@ def profile_settings(request: HttpRequest) -> JsonResponse:
     update_fields: list[str] = []
     if display_name_raw is not None:
         normalized_display_name = str(display_name_raw).strip()
-        display_name_error = _validate_chat_display_name(normalized_display_name, user_id=user_id)
+        display_name_error = _validate_chat_display_name(normalized_display_name, user_id=resolved_user_id)
         if display_name_error is not None:
             return display_name_error
         if profile.display_name != normalized_display_name:
@@ -903,7 +1068,7 @@ def profile_settings(request: HttpRequest) -> JsonResponse:
     if update_fields:
         profile.save(update_fields=list(dict.fromkeys(update_fields + ["updated_at"])))
 
-    return JsonResponse(_serialize_profile_settings(user_id=user_id, profile=profile, telegram_id=telegram_id))
+    return JsonResponse(_serialize_profile_settings(user_id=resolved_user_id, profile=profile, telegram_id=telegram_id))
 
 
 def profile_avatar(request: HttpRequest, target_user_id: int) -> JsonResponse | FileResponse:
@@ -1000,16 +1165,20 @@ def payment_proof_file(request: HttpRequest, proof_id: int) -> JsonResponse | Fi
 
 
 def chat_users(request: HttpRequest) -> JsonResponse:
-    user_id, email, _, username, telegram_username, photo, auth_provider = _extract_auth_identity(request)
-    if user_id is None:
+    user_id, email, telegram_id, username, telegram_username, photo, auth_provider = _extract_auth_identity(request)
+    auth_user = _ensure_auth_user(user_id_hint=user_id, email=email, telegram_id=telegram_id)
+    if auth_user is None:
         return JsonResponse({"error": "Unauthorized"}, status=401)
+    user_id = auth_user.id
+    resolved_email = _normalize_email(auth_user.email) if auth_user.email else email
     if request.method != "GET":
         return JsonResponse({"error": "Invalid method"}, status=405)
 
     _upsert_chat_profile(
         user_id=user_id,
         username=username,
-        email=email,
+        email=resolved_email,
+        telegram_id=telegram_id,
         telegram_username=telegram_username,
         photo=photo,
         auth_provider=auth_provider,
@@ -1077,14 +1246,18 @@ def chat_users(request: HttpRequest) -> JsonResponse:
 
 @csrf_exempt
 def chat_messages(request: HttpRequest) -> JsonResponse:
-    user_id, email, _, username, telegram_username, photo, auth_provider = _extract_auth_identity(request)
-    if user_id is None:
+    user_id, email, telegram_id, username, telegram_username, photo, auth_provider = _extract_auth_identity(request)
+    auth_user = _ensure_auth_user(user_id_hint=user_id, email=email, telegram_id=telegram_id)
+    if auth_user is None:
         return JsonResponse({"error": "Unauthorized"}, status=401)
+    user_id = auth_user.id
+    resolved_email = _normalize_email(auth_user.email) if auth_user.email else email
 
     profile = _upsert_chat_profile(
         user_id=user_id,
         username=username,
-        email=email,
+        email=resolved_email,
+        telegram_id=telegram_id,
         telegram_username=telegram_username,
         photo=photo,
         auth_provider=auth_provider,
@@ -1093,7 +1266,7 @@ def chat_messages(request: HttpRequest) -> JsonResponse:
         user_id=user_id,
         display_name=profile.display_name,
         username=username,
-        email=email,
+        email=resolved_email,
         telegram_username=telegram_username,
     )
 
@@ -1260,8 +1433,11 @@ def chat_messages(request: HttpRequest) -> JsonResponse:
 @csrf_exempt
 def chat_message_item(request: HttpRequest, message_id: int) -> JsonResponse:
     user_id, email, telegram_id, username, telegram_username, photo, auth_provider = _extract_auth_identity(request)
-    if user_id is None:
+    auth_user = _ensure_auth_user(user_id_hint=user_id, email=email, telegram_id=telegram_id)
+    if auth_user is None:
         return JsonResponse({"error": "Unauthorized"}, status=401)
+    user_id = auth_user.id
+    resolved_email = _normalize_email(auth_user.email) if auth_user.email else email
     if request.method not in {"PATCH", "DELETE"}:
         return JsonResponse({"error": "Invalid method"}, status=405)
 
@@ -1278,7 +1454,8 @@ def chat_message_item(request: HttpRequest, message_id: int) -> JsonResponse:
     profile = _upsert_chat_profile(
         user_id=user_id,
         username=username,
-        email=email,
+        email=resolved_email,
+        telegram_id=telegram_id,
         telegram_username=telegram_username,
         photo=photo,
         auth_provider=auth_provider,
@@ -1287,7 +1464,7 @@ def chat_message_item(request: HttpRequest, message_id: int) -> JsonResponse:
         user_id=user_id,
         display_name=profile.display_name,
         username=username,
-        email=email,
+        email=resolved_email,
         telegram_username=telegram_username,
     )
 
@@ -1348,9 +1525,11 @@ def chat_message_item(request: HttpRequest, message_id: int) -> JsonResponse:
 
 @csrf_exempt
 def chat_read_marker(request: HttpRequest) -> JsonResponse:
-    user_id, _, _, _, _, _, _ = _extract_auth_identity(request)
-    if user_id is None:
+    user_id, email, telegram_id, _, _, _, _ = _extract_auth_identity(request)
+    auth_user = _ensure_auth_user(user_id_hint=user_id, email=email, telegram_id=telegram_id)
+    if auth_user is None:
         return JsonResponse({"error": "Unauthorized"}, status=401)
+    user_id = auth_user.id
     if request.method != "POST":
         return JsonResponse({"error": "Invalid method"}, status=405)
 
@@ -1378,9 +1557,11 @@ def chat_read_marker(request: HttpRequest) -> JsonResponse:
 
 
 def chat_unread(request: HttpRequest) -> JsonResponse:
-    user_id, _, _, _, _, _, _ = _extract_auth_identity(request)
-    if user_id is None:
+    user_id, email, telegram_id, _, _, _, _ = _extract_auth_identity(request)
+    auth_user = _ensure_auth_user(user_id_hint=user_id, email=email, telegram_id=telegram_id)
+    if auth_user is None:
         return JsonResponse({"error": "Unauthorized"}, status=401)
+    user_id = auth_user.id
     if request.method != "GET":
         return JsonResponse({"error": "Invalid method"}, status=405)
     return JsonResponse(_chat_unread_summary(user_id))
@@ -1627,6 +1808,7 @@ def admin_update_user_credentials(request: HttpRequest, target_user_id: int) -> 
     next_display_name = payload.get("display_name")
     next_chat_username = payload.get("chat_username")
     next_chat_email = payload.get("chat_email")
+    next_telegram_id = payload.get("telegram_id")
     next_telegram_username = payload.get("telegram_username")
     next_photo = payload.get("photo")
     next_auth_provider = payload.get("auth_provider")
@@ -1640,6 +1822,7 @@ def admin_update_user_credentials(request: HttpRequest, target_user_id: int) -> 
             next_display_name,
             next_chat_username,
             next_chat_email,
+            next_telegram_id,
             next_telegram_username,
             next_photo,
             next_auth_provider,
@@ -1713,6 +1896,18 @@ def admin_update_user_credentials(request: HttpRequest, target_user_id: int) -> 
         if profile.telegram_username != normalized_telegram_username:
             profile.telegram_username = normalized_telegram_username
             updated_profile_fields.append("telegram_username")
+
+    if next_telegram_id is not None:
+        normalized_telegram_id = _parse_optional_any_int(next_telegram_id)
+        if normalized_telegram_id is None and str(next_telegram_id).strip():
+            return JsonResponse({"error": "telegram_id must be integer"}, status=400)
+        if normalized_telegram_id is not None:
+            ChatUserProfile.objects.filter(telegram_id=normalized_telegram_id).exclude(user_id=target_user_id).update(
+                telegram_id=None
+            )
+        if profile.telegram_id != normalized_telegram_id:
+            profile.telegram_id = normalized_telegram_id
+            updated_profile_fields.append("telegram_id")
 
     if next_photo is not None:
         normalized_photo = str(next_photo).strip()[:2048]

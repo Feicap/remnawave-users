@@ -496,7 +496,7 @@ export default function Chat() {
                 >
                   <div className="flex items-center gap-3">
                     <span className="material-symbols-outlined text-gray-500 dark:text-white">manage_accounts</span>
-                    <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">РќР°СЃС‚СЂРѕР№РєРё РїСЂРѕС„РёР»СЏ</p>
+                    <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">Настройки профиля</p>
                   </div>
                 </button>
                 <button

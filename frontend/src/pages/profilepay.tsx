@@ -90,14 +90,7 @@ export default function ProfilePay() {
       return
     }
     refreshStoredAuthUser(user)
-      .then((nextUser) => {
-        setUser((previous) => ({
-          ...nextUser,
-          photo: previous?.photo?.includes('/api/profile/avatar/')
-            ? withStoredAvatarVersion(nextUser.photo)
-            : nextUser.photo,
-        }))
-      })
+      .then((nextUser) => setUser(nextUser))
       .catch(() => {
         // Оставляем локальный профиль, если обновление временно недоступно.
       })
@@ -276,7 +269,7 @@ export default function ProfilePay() {
                 type="button"
               >
                 <span className="material-symbols-outlined text-gray-500 dark:text-white">manage_accounts</span>
-                <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">РќР°СЃС‚СЂРѕР№РєРё РїСЂРѕС„РёР»СЏ</p>
+                <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Настройки профиля</p>
               </button>
               <button
                 className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"

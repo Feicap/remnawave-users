@@ -10,7 +10,6 @@ import {
   bumpStoredAvatarVersion,
   clearStoredAuth,
   getStoredUser,
-  refreshStoredAuthUser,
   storeAuthUser,
   withStoredAvatarVersion,
 } from '../utils/auth'
@@ -99,29 +98,8 @@ export default function ProfileSettings() {
   useEffect(() => {
     if (!user) {
       navigate('/auth')
-      return
     }
-
-    let cancelled = false
-    refreshStoredAuthUser(user)
-      .then((nextUser) => {
-        if (!cancelled) {
-          setUser((previous) => ({
-            ...nextUser,
-            photo: previous?.photo?.includes('/api/profile/avatar/')
-              ? withStoredAvatarVersion(nextUser.photo)
-              : nextUser.photo,
-          }))
-        }
-      })
-      .catch(() => {
-        // Оставляем данные из localStorage, если сейчас не удалось обновить профиль.
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [navigate, user?.id])
+  }, [navigate, user])
 
   useEffect(() => {
     loadProfileSettings().catch(() => {
@@ -183,7 +161,7 @@ export default function ProfileSettings() {
         ...user,
         display_name: payload.display_name,
         username: payload.username,
-        photo: withStoredAvatarVersion(payload.photo),
+        photo: payload.photo,
         email: payload.email || user.email,
         telegram_id: typeof payload.telegram_id === 'number' ? payload.telegram_id : user.telegram_id,
         telegram_username: payload.telegram_username || user.telegram_username,
@@ -191,18 +169,7 @@ export default function ProfileSettings() {
       }
       storeAuthUser(nextUser)
       setUser(nextUser)
-
-      try {
-        const refreshed = await refreshStoredAuthUser(nextUser)
-        const refreshedUser: AuthUser = {
-          ...refreshed,
-          photo: withStoredAvatarVersion(refreshed.photo),
-        }
-        storeAuthUser(refreshedUser)
-        setUser(refreshedUser)
-      } catch {
-        // Не блокируем UX, если автообновление профиля временно недоступно.
-      }
+      setProfileDisplayName(payload.display_name || '')
 
       setAvatarFile(null)
       setRemoveAvatar(false)

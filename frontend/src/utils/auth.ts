@@ -44,6 +44,8 @@ export function buildAuthHeaders(
   user: Pick<AuthUser, 'id' | 'username' | 'email' | 'telegram_id' | 'telegram_username' | 'photo' | 'auth_provider'>,
 ): HeadersInit {
   const token = localStorage.getItem(TOKEN_STORAGE_KEY) ?? ''
+  const normalizedPhoto = user.photo?.trim() ?? ''
+  const authPhoto = normalizedPhoto.includes('/api/profile/avatar/') ? normalizedPhoto.split('?')[0] : normalizedPhoto
   const fallbackEmail = user.email ?? (user.username?.includes('@') ? user.username : '')
   const fallbackTelegramId =
     typeof user.telegram_id === 'number' ? user.telegram_id : user.auth_provider === 'telegram' ? user.id : undefined
@@ -59,7 +61,7 @@ export function buildAuthHeaders(
     'X-Auth-Email': fallbackEmail ?? '',
     'X-Auth-Telegram-Id': typeof fallbackTelegramId === 'number' ? String(fallbackTelegramId) : '',
     'X-Auth-Telegram-Username': fallbackTelegramUsername ?? '',
-    'X-Auth-Photo': user.photo ?? '',
+    'X-Auth-Photo': authPhoto,
     'X-Auth-Provider': user.auth_provider ?? '',
   }
 }
