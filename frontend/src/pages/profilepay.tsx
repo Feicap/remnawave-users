@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router'
 import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
 import type { PaymentProof } from '../types/payment'
-import { buildAuthHeaders, clearStoredAuth, getStoredUser } from '../utils/auth'
+import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser, withStoredAvatarVersion } from '../utils/auth'
 import { isAdminUser } from '../utils/admin'
 
 const DEFAULT_AVATAR =
@@ -21,7 +21,7 @@ function statusIcon(status: PaymentProof['status']): { icon: string; className: 
 }
 
 function getAvatarUrl(photo?: string): string {
-  const normalized = photo?.trim() ?? ''
+  const normalized = withStoredAvatarVersion(photo)
   return normalized || DEFAULT_AVATAR
 }
 
@@ -40,7 +40,7 @@ function handleAvatarError(event: SyntheticEvent<HTMLImageElement>): void {
 
 export default function ProfilePay() {
   const navigate = useNavigate()
-  const [user] = useState<AuthUser | null>(() => getStoredUser())
+  const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
   const { totalUnread } = useChatUnreadPing(user)
   const [items, setItems] = useState<PaymentProof[]>([])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -84,6 +84,24 @@ export default function ProfilePay() {
 
     return () => clearInterval(intervalId)
   }, [navigate, user, loadMyProofs])
+
+  useEffect(() => {
+    if (!user) {
+      return
+    }
+    refreshStoredAuthUser(user)
+      .then((nextUser) => {
+        setUser((previous) => ({
+          ...nextUser,
+          photo: previous?.photo?.includes('/api/profile/avatar/')
+            ? withStoredAvatarVersion(nextUser.photo)
+            : nextUser.photo,
+        }))
+      })
+      .catch(() => {
+        // Оставляем локальный профиль, если обновление временно недоступно.
+      })
+  }, [user?.id])
 
   useEffect(() => {
     if (!user || items.length === 0) {
@@ -194,6 +212,10 @@ export default function ProfilePay() {
     navigate('/chat')
   }
 
+  function handleProfileSettingsClick() {
+    navigate('/profile-settings')
+  }
+
   function handleAuthClick() {
     clearStoredAuth()
     navigate('/auth')
@@ -248,6 +270,14 @@ export default function ProfilePay() {
                   <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Админ панель</p>
                 </button>
               ) : null}
+              <button
+                className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"
+                onClick={handleProfileSettingsClick}
+                type="button"
+              >
+                <span className="material-symbols-outlined text-gray-500 dark:text-white">manage_accounts</span>
+                <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">РќР°СЃС‚СЂРѕР№РєРё РїСЂРѕС„РёР»СЏ</p>
+              </button>
               <button
                 className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"
                 onClick={handleChatClick}

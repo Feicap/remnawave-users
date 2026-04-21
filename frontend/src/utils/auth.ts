@@ -3,6 +3,7 @@ import type { AuthUser } from '../types/auth'
 const AUTH_STORAGE_KEY = 'tg_user'
 const TOKEN_STORAGE_KEY = 'token'
 const SUBSCRIPTION_STORAGE_KEY = 'subscription_url'
+const AVATAR_VERSION_STORAGE_KEY = 'profile_avatar_version'
 
 export function getStoredUser(): AuthUser | null {
   const stored = localStorage.getItem(AUTH_STORAGE_KEY)
@@ -36,6 +37,7 @@ export function clearStoredAuth(): void {
   localStorage.removeItem(AUTH_STORAGE_KEY)
   localStorage.removeItem(TOKEN_STORAGE_KEY)
   localStorage.removeItem(SUBSCRIPTION_STORAGE_KEY)
+  localStorage.removeItem(AVATAR_VERSION_STORAGE_KEY)
 }
 
 export function buildAuthHeaders(
@@ -74,4 +76,23 @@ export async function refreshStoredAuthUser(user: AuthUser): Promise<AuthUser> {
   const nextUser = (await response.json()) as AuthUser
   storeAuthUser(nextUser)
   return nextUser
+}
+
+export function bumpStoredAvatarVersion(): string {
+  const version = String(Date.now())
+  localStorage.setItem(AVATAR_VERSION_STORAGE_KEY, version)
+  return version
+}
+
+export function withStoredAvatarVersion(photo?: string): string {
+  const normalized = photo?.trim() ?? ''
+  if (!normalized) {
+    return ''
+  }
+  const version = localStorage.getItem(AVATAR_VERSION_STORAGE_KEY)
+  if (!version) {
+    return normalized
+  }
+  const separator = normalized.includes('?') ? '&' : '?'
+  return `${normalized}${separator}v=${encodeURIComponent(version)}`
 }

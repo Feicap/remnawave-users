@@ -5,7 +5,7 @@ import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
 import type { ChatMessageItem, ChatMessagesResponse, ChatScope, ChatUserItem } from '../types/chat'
 import { isAdminUser } from '../utils/admin'
-import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser } from '../utils/auth'
+import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser, withStoredAvatarVersion } from '../utils/auth'
 
 const DEFAULT_AVATAR =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
@@ -13,7 +13,7 @@ const USERS_REFRESH_INTERVAL_MS = 10_000
 const MESSAGES_REFRESH_INTERVAL_MS = 4_000
 
 function getAvatarUrl(photo?: string): string {
-  const normalized = photo?.trim() ?? ''
+  const normalized = withStoredAvatarVersion(photo)
   return normalized || DEFAULT_AVATAR
 }
 
@@ -106,6 +106,16 @@ export default function Chat() {
       return target.includes(search)
     })
   }, [userSearch, users])
+  const avatarByUserId = useMemo(() => {
+    const mapping = new Map<number, string>()
+    if (user) {
+      mapping.set(user.id, getAvatarUrl(user.photo))
+    }
+    for (const item of users) {
+      mapping.set(item.user_id, getAvatarUrl(item.photo))
+    }
+    return mapping
+  }, [user, users])
 
   const handleUnauthorized = useCallback(() => {
     clearStoredAuth()
@@ -420,6 +430,10 @@ export default function Chat() {
     navigate('/profile-pay')
   }
 
+  function handleGoProfileSettings() {
+    navigate('/profile-settings')
+  }
+
   function handleGoAdmin() {
     navigate('/admin')
   }
@@ -475,6 +489,16 @@ export default function Chat() {
                   </div>
                   <p className="text-sm font-medium leading-normal text-primary dark:text-white">Чат</p>
                 </a>
+                <button
+                  className="cursor-pointer rounded-lg px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800/50"
+                  onClick={handleGoProfileSettings}
+                  type="button"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="material-symbols-outlined text-gray-500 dark:text-white">manage_accounts</span>
+                    <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">РќР°СЃС‚СЂРѕР№РєРё РїСЂРѕС„РёР»СЏ</p>
+                  </div>
+                </button>
                 <button
                   className="cursor-pointer rounded-lg px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800/50"
                   onClick={handleGoPayment}
@@ -641,8 +665,20 @@ export default function Chat() {
                   messages.map((message) => {
                     const isMine = message.sender_id === user.id
                     const isEditing = editingMessageId === message.id
+                    const senderLabel = message.sender_username || `ID ${message.sender_id}`
+                    const senderAvatarUrl = avatarByUserId.get(message.sender_id) ?? DEFAULT_AVATAR
                     return (
                       <div className={isMine ? 'flex justify-end' : 'flex justify-start'} key={message.id}>
+                        {!isMine ? (
+                          <div className="mr-2 mt-1 size-8 shrink-0 overflow-hidden rounded-full border border-gray-200 bg-white dark:border-[#324467] dark:bg-[#111722]">
+                            <img
+                              alt={senderLabel}
+                              className="size-8 rounded-full object-cover object-center"
+                              onError={handleAvatarError}
+                              src={senderAvatarUrl}
+                            />
+                          </div>
+                        ) : null}
                         <div
                           className={
                             isMine
@@ -651,7 +687,7 @@ export default function Chat() {
                           }
                         >
                           <p className={isMine ? 'text-xs font-semibold text-white/90' : 'text-xs font-semibold text-gray-600 dark:text-[#92a4c9]'}>
-                            {message.sender_username || `ID ${message.sender_id}`}
+                            {senderLabel}
                           </p>
                           {isEditing ? (
                             <div className="mt-1 flex flex-col gap-2">
@@ -724,6 +760,16 @@ export default function Chat() {
                             </div>
                           </div>
                         </div>
+                        {isMine ? (
+                          <div className="ml-2 mt-1 size-8 shrink-0 overflow-hidden rounded-full border border-white/30 bg-primary/10 dark:border-[#324467] dark:bg-[#111722]">
+                            <img
+                              alt={senderLabel}
+                              className="size-8 rounded-full object-cover object-center"
+                              onError={handleAvatarError}
+                              src={senderAvatarUrl}
+                            />
+                          </div>
+                        ) : null}
                       </div>
                     )
                   })
