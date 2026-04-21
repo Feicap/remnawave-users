@@ -1,6 +1,7 @@
 import type { FormEvent, SyntheticEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
 import type { PaymentProof } from '../types/payment'
 import { buildAuthHeaders, clearStoredAuth, getStoredUser } from '../utils/auth'
@@ -24,6 +25,10 @@ function getAvatarUrl(photo?: string): string {
   return normalized || DEFAULT_AVATAR
 }
 
+function getDisplayName(user: AuthUser): string {
+  return user.display_name || user.username || user.telegram_username || user.email || 'User'
+}
+
 function handleAvatarError(event: SyntheticEvent<HTMLImageElement>): void {
   const image = event.currentTarget
   if (image.dataset.fallbackApplied === '1') {
@@ -36,6 +41,7 @@ function handleAvatarError(event: SyntheticEvent<HTMLImageElement>): void {
 export default function ProfilePay() {
   const navigate = useNavigate()
   const [user] = useState<AuthUser | null>(() => getStoredUser())
+  const { totalUnread } = useChatUnreadPing(user)
   const [items, setItems] = useState<PaymentProof[]>([])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -47,6 +53,7 @@ export default function ProfilePay() {
   const canViewAdminPanel = useMemo(() => (user ? isAdminUser(user) : false), [user])
   const telegramId = typeof user?.telegram_id === 'number' && Number.isFinite(user.telegram_id) ? user.telegram_id : null
   const avatarUrl = getAvatarUrl(user?.photo)
+  const displayName = user ? getDisplayName(user) : 'User'
 
   const loadMyProofs = useCallback(async () => {
     if (!user) {
@@ -183,6 +190,10 @@ export default function ProfilePay() {
     navigate('/admin')
   }
 
+  function handleChatClick() {
+    navigate('/chat')
+  }
+
   function handleAuthClick() {
     clearStoredAuth()
     navigate('/auth')
@@ -200,7 +211,7 @@ export default function ProfilePay() {
             <div className="flex items-center gap-3 px-3 py-2">
               <div className="size-10 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
                 <img
-                  alt={user.username || 'avatar'}
+                  alt={displayName}
                   className="size-10 rounded-full object-cover object-center"
                   onError={handleAvatarError}
                   src={avatarUrl}
@@ -208,7 +219,7 @@ export default function ProfilePay() {
               </div>
               <div className="flex flex-col">
                 <h1 className="text-gray-900 dark:text-white text-base font-medium leading-normal">
-                  {user.username || 'Пользователь'}
+                  {displayName}
                 </h1>
                 {telegramId !== null ? (
                   <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">
@@ -237,6 +248,21 @@ export default function ProfilePay() {
                   <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Админ панель</p>
                 </button>
               ) : null}
+              <button
+                className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"
+                onClick={handleChatClick}
+                type="button"
+              >
+                <div className="relative inline-flex items-center">
+                  <span className="material-symbols-outlined text-gray-500 dark:text-white">chat</span>
+                  {totalUnread > 0 ? (
+                    <span className="absolute -right-2 -top-1 inline-flex min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                      {totalUnread > 99 ? '99+' : totalUnread}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Чат</p>
+              </button>
               <a className="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 dark:bg-[#232f48]" href="#">
                 <span className="material-symbols-outlined text-primary dark:text-white">payment</span>
                 <p className="text-primary dark:text-white text-sm font-medium leading-normal">Оплата</p>
@@ -344,3 +370,4 @@ export default function ProfilePay() {
     </div>
   )
 }
+

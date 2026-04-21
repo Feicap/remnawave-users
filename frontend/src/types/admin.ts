@@ -2,6 +2,13 @@ export interface AdminUserItem {
   id: number
   login: string
   email: string
+  display_name: string
+  avatar_url: string
+  chat_username: string
+  chat_email: string
+  chat_telegram_username: string
+  chat_auth_provider: string
+  chat_photo: string
   date_joined: string | null
   last_login: string | null
   is_online: boolean

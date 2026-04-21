@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
-import type { AdminUserItem, AdminUsersMetrics, AdminUsersResponse, ApiError } from '../types/admin'
+import type { AdminUserItem, AdminUsersMetrics, AdminUsersResponse } from '../types/admin'
+import type { ChatMessageItem, ChatScope } from '../types/chat'
 import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser } from '../utils/auth'
 import { isAdminUser } from '../utils/admin'
 
-const REFRESH_INTERVAL_MS = 30_000
+const USERS_REFRESH_MS = 30000
+const CHAT_REFRESH_MS = 12000
 
 const DEFAULT_METRICS: AdminUsersMetrics = {
   total_users: 0,
@@ -18,198 +21,178 @@ const DEFAULT_METRICS: AdminUsersMetrics = {
 
 type UserFilter = 'all' | 'online' | 'remnawave' | 'need-password'
 
-const env = import.meta.env as Record<string, string | undefined>
-const grafanaDomain = String(env.GRAFANA_DOMAIN ?? '').trim()
-const GRAFANA_URL = grafanaDomain ? `https://${grafanaDomain.replace(/\/+$/, '')}/dashboard/` : ''
+function getDisplayName(user: AuthUser): string {
+  return user.display_name || user.username || user.telegram_username || user.email || 'Admin'
+}
 
-function getTelegramId(user: AuthUser): number | null {
-  if (typeof user.telegram_id === 'number' && Number.isFinite(user.telegram_id)) {
-    return user.telegram_id
-  }
-  return null
+async function parseApiError(response: Response, fallback: string): Promise<string> {
+  const payload = (await response.json().catch(() => null)) as { error?: string } | null
+  return payload?.error || fallback
 }
 
 function formatDateTime(value: string | null): string {
   if (!value) {
-    return 'Никогда'
+    return 'never'
   }
-
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) {
-    return 'Неверная дата'
+    return 'invalid date'
   }
-
-  return date.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-async function parseApiError(response: Response, fallback: string): Promise<string> {
-  const payload = (await response.json().catch(() => null)) as ApiError | null
-  return payload?.error || fallback
-}
-
-function RemnawaveIcon({ title }: { title: string }) {
-  return (
-    <span className="inline-flex size-4 items-center justify-center" title={title}>
-      <svg aria-hidden="true" className="size-4 text-cyan-500" viewBox="0 0 20 20">
-        <path
-          d="M2 11.2c2-3 4-3 6 0s4 3 6 0 4-3 4 0"
-          fill="none"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeWidth="1.8"
-        />
-        <path d="M2 6.8c2-3 4-3 6 0s4 3 6 0 4-3 4 0" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.8" />
-      </svg>
-    </span>
-  )
+  return date.toLocaleString('ru-RU')
 }
 
 export default function Admin() {
   const navigate = useNavigate()
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
+  const { totalUnread } = useChatUnreadPing(user)
+
   const [users, setUsers] = useState<AdminUserItem[]>([])
   const [metrics, setMetrics] = useState<AdminUsersMetrics>(DEFAULT_METRICS)
+  const [chatMessages, setChatMessages] = useState<ChatMessageItem[]>([])
+
+  const [isLoadingUsers, setIsLoadingUsers] = useState(true)
+  const [isLoadingChat, setIsLoadingChat] = useState(true)
+  const [isSaving, setIsSaving] = useState(false)
+
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<UserFilter>('all')
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
+
   const [editLogin, setEditLogin] = useState('')
   const [editPassword, setEditPassword] = useState('')
+  const [editDisplayName, setEditDisplayName] = useState('')
+  const [editChatUsername, setEditChatUsername] = useState('')
+  const [editChatEmail, setEditChatEmail] = useState('')
+  const [editTelegramUsername, setEditTelegramUsername] = useState('')
+  const [editPhoto, setEditPhoto] = useState('')
+  const [editAuthProvider, setEditAuthProvider] = useState('')
+  const [editAvatarFile, setEditAvatarFile] = useState<File | null>(null)
+  const [removeAvatar, setRemoveAvatar] = useState(false)
+
+  const [chatScope, setChatScope] = useState<'all' | ChatScope>('all')
+  const [chatUserIdFilter, setChatUserIdFilter] = useState('')
+  const [chatPeerIdFilter, setChatPeerIdFilter] = useState('')
+
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [isLoading, setIsLoading] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
 
-  const selectedUser = useMemo(
-    () => users.find((item) => item.id === selectedUserId) ?? null,
-    [selectedUserId, users],
-  )
+  const selectedUser = useMemo(() => users.find((u) => u.id === selectedUserId) ?? null, [users, selectedUserId])
 
   const filteredUsers = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase()
-    return users.filter((item) => {
-      if (filter === 'online' && !item.is_online) {
-        return false
-      }
-      if (filter === 'remnawave' && !item.has_remnawave_access) {
-        return false
-      }
-      if (filter === 'need-password' && item.has_password) {
-        return false
-      }
-      if (!normalizedSearch) {
-        return true
-      }
-      const target = `${item.id} ${item.login} ${item.email}`.toLowerCase()
-      return target.includes(normalizedSearch)
+    const q = search.trim().toLowerCase()
+    return users.filter((u) => {
+      if (filter === 'online' && !u.is_online) return false
+      if (filter === 'remnawave' && !u.has_remnawave_access) return false
+      if (filter === 'need-password' && u.has_password) return false
+      if (!q) return true
+      return `${u.id} ${u.login} ${u.email} ${u.display_name} ${u.chat_telegram_username}`.toLowerCase().includes(q)
     })
   }, [filter, search, users])
 
-  const loadUsers = useCallback(
-    async (showLoader: boolean) => {
-      if (!user) {
-        return
-      }
+  const loadUsers = useCallback(async (showLoader: boolean) => {
+    if (!user) return
+    if (showLoader) setIsLoadingUsers(true)
 
-      if (showLoader) {
-        setIsLoading(true)
-      }
-
-      try {
-        const response = await fetch('/api/admin/users/?limit=500', {
-          headers: buildAuthHeaders(user),
-        })
-
-        if (!response.ok) {
-          if (response.status === 401 || response.status === 403) {
-            clearStoredAuth()
-            navigate('/auth')
-            return
-          }
-          setError(await parseApiError(response, 'Не удалось загрузить пользователей'))
+    try {
+      const response = await fetch('/api/admin/users/?limit=500', {
+        headers: buildAuthHeaders(user),
+      })
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          clearStoredAuth()
+          navigate('/auth')
           return
         }
-
-        const payload = (await response.json()) as AdminUsersResponse
-        setUsers(payload.items)
-        setMetrics(payload.metrics)
-        setError('')
-      } catch {
-        setError('Ошибка сети при загрузке пользователей')
-      } finally {
-        setIsLoading(false)
+        setError(await parseApiError(response, 'Не удалось загрузить пользователей'))
+        return
       }
-    },
-    [navigate, user],
-  )
+      const payload = (await response.json()) as AdminUsersResponse
+      setUsers(payload.items)
+      setMetrics(payload.metrics)
+      setError('')
+    } catch {
+      setError('Сетевая ошибка при загрузке пользователей')
+    } finally {
+      setIsLoadingUsers(false)
+    }
+  }, [navigate, user])
+
+  const loadChatAudit = useCallback(async (showLoader: boolean) => {
+    if (!user) return
+    if (showLoader) setIsLoadingChat(true)
+
+    const query = new URLSearchParams({
+      limit: '200',
+      scope: chatScope,
+    })
+    if (chatUserIdFilter.trim()) query.set('user_id', chatUserIdFilter.trim())
+    if (chatPeerIdFilter.trim()) query.set('peer_id', chatPeerIdFilter.trim())
+
+    try {
+      const response = await fetch(`/api/admin/chat/messages/?${query.toString()}`, {
+        headers: buildAuthHeaders(user),
+      })
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          clearStoredAuth()
+          navigate('/auth')
+          return
+        }
+        setError(await parseApiError(response, 'Не удалось загрузить сообщения чата'))
+        return
+      }
+      const payload = (await response.json()) as { items: ChatMessageItem[] }
+      setChatMessages(payload.items)
+    } catch {
+      setError('Сетевая ошибка при загрузке сообщений чата')
+    } finally {
+      setIsLoadingChat(false)
+    }
+  }, [chatPeerIdFilter, chatScope, chatUserIdFilter, navigate, user])
 
   useEffect(() => {
-    const storedUser = getStoredUser()
-    if (!storedUser) {
+    const stored = getStoredUser()
+    if (!stored) {
       navigate('/auth')
       return
     }
-
-    if (!isAdminUser(storedUser)) {
+    if (!isAdminUser(stored)) {
       navigate('/profile')
       return
     }
-
-    let isCancelled = false
-    refreshStoredAuthUser(storedUser)
-      .then((nextUser) => {
-        if (!isCancelled) {
-          setUser(nextUser)
-        }
-      })
-      .catch(() => {
-        if (!isCancelled) {
-          setError('Не удалось обновить профиль администратора')
-        }
-      })
-
-    return () => {
-      isCancelled = true
-    }
+    refreshStoredAuthUser(stored).then(setUser).catch(() => {
+      setError('Не удалось обновить профиль администратора')
+    })
   }, [navigate])
 
   useEffect(() => {
-    if (!user || !isAdminUser(user)) {
-      return
-    }
-
+    if (!user || !isAdminUser(user)) return
     loadUsers(true).catch(() => {
       setError('Не удалось загрузить пользователей')
     })
-
-    const intervalId = window.setInterval(() => {
-      loadUsers(false).catch(() => {
-        setError('Не удалось обновить данные админки')
-      })
-    }, REFRESH_INTERVAL_MS)
-
-    return () => {
-      window.clearInterval(intervalId)
-    }
+    const timer = window.setInterval(() => {
+      loadUsers(false).catch(() => null)
+    }, USERS_REFRESH_MS)
+    return () => window.clearInterval(timer)
   }, [loadUsers, user])
+
+  useEffect(() => {
+    if (!user || !isAdminUser(user)) return
+    loadChatAudit(true).catch(() => {
+      setError('Не удалось загрузить чат')
+    })
+    const timer = window.setInterval(() => {
+      loadChatAudit(false).catch(() => null)
+    }, CHAT_REFRESH_MS)
+    return () => window.clearInterval(timer)
+  }, [loadChatAudit, user])
 
   useEffect(() => {
     if (users.length === 0) {
       setSelectedUserId(null)
       return
     }
-
-    setSelectedUserId((previousId) => {
-      if (previousId !== null && users.some((item) => item.id === previousId)) {
-        return previousId
-      }
-      return users[0].id
-    })
+    setSelectedUserId((prev) => (prev !== null && users.some((item) => item.id === prev) ? prev : users[0].id))
   }, [users])
 
   useEffect(() => {
@@ -220,6 +203,14 @@ export default function Admin() {
     }
     setEditLogin(selectedUser.login)
     setEditPassword('')
+    setEditDisplayName(selectedUser.display_name || '')
+    setEditChatUsername(selectedUser.chat_username || '')
+    setEditChatEmail(selectedUser.chat_email || '')
+    setEditTelegramUsername(selectedUser.chat_telegram_username || '')
+    setEditPhoto(selectedUser.chat_photo || '')
+    setEditAuthProvider(selectedUser.chat_auth_provider || '')
+    setEditAvatarFile(null)
+    setRemoveAvatar(false)
     setNotice('')
   }, [selectedUser])
 
@@ -227,29 +218,35 @@ export default function Admin() {
     return <div>Loading...</div>
   }
 
-  const telegramId = getTelegramId(user)
+  async function handleSaveUser() {
+    if (!selectedUser || !user) return
+    const data = new FormData()
+    let changed = false
 
-  async function handleSaveCredentials() {
-    if (!user || !selectedUser) {
-      return
-    }
-
-    const normalizedLogin = editLogin.trim().toLowerCase()
-    const payload: Record<string, string> = {}
-
-    if (!normalizedLogin) {
+    const nextLogin = editLogin.trim().toLowerCase()
+    if (!nextLogin) {
       setError('Логин не может быть пустым')
       return
     }
-    if (normalizedLogin !== selectedUser.login.toLowerCase()) {
-      payload.login = normalizedLogin
+    if (nextLogin !== selectedUser.login.toLowerCase()) {
+      data.append('login', nextLogin)
+      changed = true
     }
-
     if (editPassword.trim()) {
-      payload.password = editPassword
+      data.append('password', editPassword)
+      changed = true
     }
 
-    if (!payload.login && !payload.password) {
+    if (editDisplayName.trim() !== (selectedUser.display_name || '')) { data.append('display_name', editDisplayName.trim()); changed = true }
+    if (editChatUsername.trim() !== (selectedUser.chat_username || '')) { data.append('chat_username', editChatUsername.trim()); changed = true }
+    if (editChatEmail.trim().toLowerCase() !== (selectedUser.chat_email || '').toLowerCase()) { data.append('chat_email', editChatEmail.trim().toLowerCase()); changed = true }
+    if (editTelegramUsername.trim() !== (selectedUser.chat_telegram_username || '')) { data.append('telegram_username', editTelegramUsername.trim()); changed = true }
+    if (editPhoto.trim() !== (selectedUser.chat_photo || '')) { data.append('photo', editPhoto.trim()); changed = true }
+    if (editAuthProvider.trim().toLowerCase() !== (selectedUser.chat_auth_provider || '')) { data.append('auth_provider', editAuthProvider.trim().toLowerCase()); changed = true }
+    if (editAvatarFile) { data.append('avatar', editAvatarFile); changed = true }
+    if (removeAvatar) { data.append('remove_avatar', 'true'); changed = true }
+
+    if (!changed) {
       setNotice('Нет изменений для сохранения')
       return
     }
@@ -257,375 +254,152 @@ export default function Admin() {
     setIsSaving(true)
     setError('')
     setNotice('')
-
     try {
       const response = await fetch(`/api/admin/users/${selectedUser.id}/`, {
         method: 'PATCH',
-        headers: {
-          ...buildAuthHeaders(user),
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
+        headers: buildAuthHeaders(user),
+        body: data,
       })
-
       if (!response.ok) {
-        setError(await parseApiError(response, 'Не удалось обновить данные пользователя'))
+        setError(await parseApiError(response, 'Не удалось сохранить пользователя'))
         return
       }
-
+      setNotice('Пользователь обновлен')
       setEditPassword('')
-      setNotice('Данные пользователя обновлены')
+      setEditAvatarFile(null)
+      setRemoveAvatar(false)
       await loadUsers(false)
     } catch {
-      setError('Ошибка сети при сохранении пользователя')
+      setError('Сетевая ошибка при сохранении пользователя')
     } finally {
       setIsSaving(false)
     }
   }
 
   async function handleResetPassword() {
-    if (!user || !selectedUser) {
-      return
-    }
-
-    if (!window.confirm(`Сбросить пароль для ${selectedUser.login}? После этого пользователь должен пройти регистрацию заново.`)) {
-      return
-    }
-
+    if (!selectedUser || !user) return
     setIsSaving(true)
     setError('')
     setNotice('')
-
     try {
       const response = await fetch(`/api/admin/users/${selectedUser.id}/reset-password/`, {
         method: 'POST',
         headers: buildAuthHeaders(user),
       })
-
       if (!response.ok) {
-        setError(await parseApiError(response, 'Не удалось сбросить пароль пользователя'))
+        setError(await parseApiError(response, 'Не удалось сбросить пароль'))
         return
       }
-
-      setEditPassword('')
-      setNotice('Пароль удалён. Пользователь должен зарегистрироваться заново.')
+      setNotice('Пароль сброшен')
       await loadUsers(false)
     } catch {
-      setError('Ошибка сети при сбросе пароля')
+      setError('Сетевая ошибка при сбросе пароля')
     } finally {
       setIsSaving(false)
     }
   }
 
-  function handleBackToProfile() {
-    navigate('/profile')
-  }
-
-  function handlePaymentCheck() {
-    navigate('/admin-check')
-  }
-
-  function handleLogout() {
-    clearStoredAuth()
-    navigate('/auth')
-  }
-
   return (
-    <div className="flex min-h-screen flex-col md:h-screen md:flex-row">
-      <aside className="w-full border-b border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-[#111722] md:w-64 md:flex-shrink-0 md:border-b-0 md:border-r">
-        <div className="flex flex-col justify-between gap-8 md:h-full">
-          <div className="flex flex-col gap-8">
-            <div className="flex items-center gap-3 px-2">
-              <span className="material-symbols-outlined text-3xl text-primary">shield</span>
-              <span className="text-xl font-bold text-gray-900 dark:text-white">Мой VPS</span>
-            </div>
-            <div className="flex flex-col gap-4">
-              <div className="flex items-center gap-3 px-3 py-2">
-                <div
-                  className="size-10 rounded-full bg-cover bg-center bg-no-repeat"
-                  style={{
-                    backgroundImage: `url("${user.photo || 'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'}")`,
-                  }}
-                />
-                <div className="flex flex-col">
-                  <h1 className="text-base font-medium leading-normal text-gray-900 dark:text-white">
-                    {user.username || 'Администратор'}
-                  </h1>
-                  {user.email ? (
-                    <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">{user.email}</p>
-                  ) : null}
-                  {telegramId !== null ? (
-                    <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">
-                      Telegram ID: {telegramId}
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-              <nav className="flex flex-col gap-2">
-                <a className="flex items-center gap-3 rounded-lg bg-primary/10 px-3 py-2 dark:bg-[#232f48]" href="#">
-                  <span className="material-symbols-outlined text-primary dark:text-white">admin_panel_settings</span>
-                  <p className="text-sm font-medium leading-normal text-primary dark:text-white">Админ панель</p>
-                </a>
-                <button
-                  className="cursor-pointer rounded-lg px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800/50"
-                  onClick={handlePaymentCheck}
-                  type="button"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="material-symbols-outlined text-gray-500 dark:text-white">credit_card</span>
-                    <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">Проверка оплаты</p>
-                  </div>
-                </button>
-                {GRAFANA_URL ? (
-                  <a
-                    className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800/50"
-                    href={GRAFANA_URL}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
-                    <span className="material-symbols-outlined text-gray-500 dark:text-white">monitoring</span>
-                    <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">Grafana</p>
-                  </a>
-                ) : null}
-                <button
-                  className="cursor-pointer rounded-lg px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800/50"
-                  onClick={handleBackToProfile}
-                  type="button"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="material-symbols-outlined text-gray-500 dark:text-white">arrow_back</span>
-                    <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">Обратно в профиль</p>
-                  </div>
-                </button>
-              </nav>
-            </div>
-          </div>
-          <button
-            className="flex h-10 w-full cursor-pointer items-center justify-center overflow-hidden rounded-lg bg-primary px-4 text-sm font-bold leading-normal tracking-[0.015em] text-white hover:bg-primary/90"
-            onClick={handleLogout}
-            type="button"
-          >
-            <span className="truncate">Выйти</span>
-          </button>
+    <div className="flex min-h-screen flex-col gap-4 bg-gray-50 p-4 dark:bg-[#0d1321]">
+      <header className="flex items-center justify-between rounded-xl border border-gray-200 bg-white p-4 dark:border-[#324467] dark:bg-[#111722]">
+        <div>
+          <p className="text-xl font-bold text-gray-900 dark:text-white">Admin</p>
+          <p className="text-sm text-gray-500 dark:text-[#92a4c9]">{getDisplayName(user)}</p>
         </div>
-      </aside>
-
-      <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-10">
-        <div className="mx-auto flex max-w-7xl flex-col gap-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <p className="text-4xl font-black leading-tight tracking-[-0.033em] text-gray-900 dark:text-white">
-                Управление пользователями
-              </p>
-              <p className="text-base font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">
-                Онлайн-активность, доступ Remnawave и управление авторизацией аккаунтов.
-              </p>
-            </div>
-            <button
-              className="flex h-10 min-w-[84px] cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg bg-primary px-4 text-sm font-bold leading-normal tracking-[0.015em] text-white hover:bg-primary/90"
-              onClick={() => {
-                loadUsers(true).catch(() => {
-                  setError('Не удалось обновить пользователей')
-                })
-              }}
-              type="button"
-            >
-              <span className="material-symbols-outlined text-base">refresh</span>
-              <span className="truncate">Обновить</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Всего аккаунтов</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{metrics.total_users}</p>
-            </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Онлайн на сайте</p>
-              <p className="text-2xl font-bold text-green-600 dark:text-green-400">{metrics.online_users}</p>
-              <p className="text-xs text-gray-500 dark:text-[#92a4c9]">За последние {metrics.online_window_minutes} минут</p>
-            </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Доступ к Remnawave</p>
-              <p className="text-2xl font-bold text-cyan-600 dark:text-cyan-400">{metrics.remnawave_access_users}</p>
-            </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Нужна перерегистрация</p>
-              <p className="text-2xl font-bold text-red-600 dark:text-red-400">{metrics.users_without_password}</p>
-            </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Активны сегодня</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{metrics.active_today}</p>
-            </div>
-          </div>
-
-          {error ? <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div> : null}
-          {notice ? <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">{notice}</div> : null}
-
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-            <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722] xl:col-span-2">
-              <div className="mb-4 flex flex-wrap gap-3">
-                <input
-                  className="h-10 min-w-[220px] flex-1 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Поиск по ID, логину или email"
-                  value={search}
-                />
-                <select
-                  className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
-                  onChange={(event) => setFilter(event.target.value as UserFilter)}
-                  value={filter}
-                >
-                  <option value="all">Все</option>
-                  <option value="online">Только онлайн</option>
-                  <option value="remnawave">С доступом Remnawave</option>
-                  <option value="need-password">Без пароля</option>
-                </select>
-              </div>
-
-              {isLoading ? (
-                <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Загрузка...</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full">
-                    <thead>
-                      <tr className="border-b border-gray-200 dark:border-[#324467]">
-                        <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">Пользователь</th>
-                        <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">Статус</th>
-                        <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">Пароль</th>
-                        <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">Последний вход</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredUsers.map((item) => (
-                        <tr
-                          className={
-                            item.id === selectedUserId
-                              ? 'cursor-pointer border-b border-gray-100 bg-primary/5 dark:border-[#1e2a40] dark:bg-[#1d2b45]'
-                              : 'cursor-pointer border-b border-gray-100 dark:border-[#1e2a40]'
-                          }
-                          key={item.id}
-                          onClick={() => setSelectedUserId(item.id)}
-                        >
-                          <td className="px-3 py-3">
-                            <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-white">
-                              <span>{item.login}</span>
-                              {item.has_remnawave_access ? <RemnawaveIcon title="Есть доступ Remnawave" /> : null}
-                            </div>
-                            <p className="text-xs text-gray-500 dark:text-[#92a4c9]">
-                              ID {item.id} • {item.email || 'email не задан'}
-                            </p>
-                          </td>
-                          <td className="px-3 py-3 text-sm">
-                            {item.is_online ? (
-                              <span className="inline-flex rounded-full bg-green-500/10 px-2 py-1 text-xs font-semibold text-green-600">
-                                Онлайн
-                              </span>
-                            ) : (
-                              <span className="inline-flex rounded-full bg-gray-500/10 px-2 py-1 text-xs font-semibold text-gray-600">
-                                Не в сети
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-3 text-sm">
-                            {item.has_password ? (
-                              <span className="inline-flex rounded-full bg-blue-500/10 px-2 py-1 text-xs font-semibold text-blue-600">
-                                Установлен
-                              </span>
-                            ) : (
-                              <span className="inline-flex rounded-full bg-red-500/10 px-2 py-1 text-xs font-semibold text-red-600">
-                                Сброшен
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-3 text-sm text-gray-600 dark:text-[#92a4c9]">{formatDateTime(item.last_login)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-
-            <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              {!selectedUser ? (
-                <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Выберите пользователя в списке</p>
-              ) : (
-                <div className="flex flex-col gap-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-[#92a4c9]">Редактор аккаунта</p>
-                    <div className="mt-1 flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
-                      <span>{selectedUser.login}</span>
-                      {selectedUser.has_remnawave_access ? <RemnawaveIcon title="Есть доступ Remnawave" /> : null}
-                    </div>
-                    <p className="text-xs text-gray-500 dark:text-[#92a4c9]">ID: {selectedUser.id}</p>
-                  </div>
-
-                  <label className="flex flex-col gap-2">
-                    <span className="text-sm font-medium text-gray-700 dark:text-white">Логин (email)</span>
-                    <input
-                      className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
-                      onChange={(event) => setEditLogin(event.target.value)}
-                      type="email"
-                      value={editLogin}
-                    />
-                  </label>
-
-                  <label className="flex flex-col gap-2">
-                    <span className="text-sm font-medium text-gray-700 dark:text-white">Новый пароль</span>
-                    <input
-                      className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
-                      onChange={(event) => setEditPassword(event.target.value)}
-                      placeholder="Оставьте пустым, если не менять"
-                      type="password"
-                      value={editPassword}
-                    />
-                  </label>
-
-                  <div className="flex flex-col gap-2">
-                    <button
-                      className="flex h-10 items-center justify-center rounded-lg bg-primary px-3 text-sm font-bold text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={isSaving}
-                      onClick={handleSaveCredentials}
-                      type="button"
-                    >
-                      Сохранить логин/пароль
-                    </button>
-                    <button
-                      className="flex h-10 items-center justify-center rounded-lg border border-red-300 px-3 text-sm font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10"
-                      disabled={isSaving}
-                      onClick={handleResetPassword}
-                      type="button"
-                    >
-                      Сбросить и удалить пароль
-                    </button>
-                  </div>
-
-                  <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-[#0d1525] dark:text-[#92a4c9]">
-                    <p>Дата регистрации: {formatDateTime(selectedUser.date_joined)}</p>
-                    <p>Последний вход: {formatDateTime(selectedUser.last_login)}</p>
-                  </div>
-
-                  {selectedUser.subscription_url ? (
-                    <a
-                      className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-100 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-300 dark:hover:bg-cyan-500/20"
-                      href={selectedUser.subscription_url}
-                      rel="noopener noreferrer"
-                      target="_blank"
-                    >
-                      Открыть ссылку Remnawave
-                    </a>
-                  ) : (
-                    <div className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500 dark:border-[#324467] dark:text-[#92a4c9]">
-                      У пользователя нет ссылки Remnawave
-                    </div>
-                  )}
-                </div>
-              )}
-            </section>
-          </div>
+        <div className="flex items-center gap-2">
+          <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => navigate('/profile')} type="button">Профиль</button>
+          <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => navigate('/admin-check')} type="button">Проверка оплат</button>
+          <button className="rounded-lg border px-3 py-2 text-sm" onClick={() => navigate('/chat')} type="button">Чат ({totalUnread})</button>
+          <button className="rounded-lg bg-primary px-3 py-2 text-sm text-white" onClick={() => { clearStoredAuth(); navigate('/auth') }} type="button">Выйти</button>
         </div>
-      </main>
+      </header>
+
+      <section className="grid grid-cols-2 gap-2 md:grid-cols-6">
+        <div className="rounded-lg border bg-white p-2 text-sm dark:border-[#324467] dark:bg-[#111722]">Всего: {metrics.total_users}</div>
+        <div className="rounded-lg border bg-white p-2 text-sm dark:border-[#324467] dark:bg-[#111722]">Онлайн: {metrics.online_users}</div>
+        <div className="rounded-lg border bg-white p-2 text-sm dark:border-[#324467] dark:bg-[#111722]">Remnawave: {metrics.remnawave_access_users}</div>
+        <div className="rounded-lg border bg-white p-2 text-sm dark:border-[#324467] dark:bg-[#111722]">Без пароля: {metrics.users_without_password}</div>
+        <div className="rounded-lg border bg-white p-2 text-sm dark:border-[#324467] dark:bg-[#111722]">Сегодня: {metrics.active_today}</div>
+        <div className="rounded-lg border bg-white p-2 text-sm dark:border-[#324467] dark:bg-[#111722]">Окно: {metrics.online_window_minutes}m</div>
+      </section>
+
+      {error ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
+      {notice ? <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">{notice}</div> : null}
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <section className="xl:col-span-2 rounded-xl border border-gray-200 bg-white p-4 dark:border-[#324467] dark:bg-[#111722]">
+          <div className="mb-3 flex gap-2">
+            <input className="h-9 flex-1 rounded border px-2" placeholder="search" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <select className="h-9 rounded border px-2" value={filter} onChange={(e) => setFilter(e.target.value as UserFilter)}>
+              <option value="all">all</option><option value="online">online</option><option value="remnawave">remnawave</option><option value="need-password">need-password</option>
+            </select>
+          </div>
+          {isLoadingUsers ? <p>loading...</p> : (
+            <div className="max-h-[52vh] overflow-auto">
+              <table className="min-w-full text-sm"><thead><tr><th className="text-left">user</th><th className="text-left">online</th><th className="text-left">pass</th><th className="text-left">last</th></tr></thead>
+              <tbody>
+                {filteredUsers.map((u) => (
+                  <tr key={u.id} className={u.id === selectedUserId ? 'bg-primary/10 cursor-pointer' : 'cursor-pointer'} onClick={() => setSelectedUserId(u.id)}>
+                    <td>{u.login}<div className="text-xs opacity-70">{u.display_name || '-'} · {u.email || '-'}</div></td>
+                    <td>{u.is_online ? 'yes' : 'no'}</td>
+                    <td>{u.has_password ? 'set' : 'reset'}</td>
+                    <td>{formatDateTime(u.last_login)}</td>
+                  </tr>
+                ))}
+              </tbody></table>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-xl border border-gray-200 bg-white p-4 dark:border-[#324467] dark:bg-[#111722]">
+          {!selectedUser ? <p>Выберите пользователя</p> : (
+            <div className="space-y-2 text-sm">
+              <p className="font-semibold">ID {selectedUser.id}</p>
+              <input className="h-9 w-full rounded border px-2" value={editLogin} onChange={(e) => setEditLogin(e.target.value)} placeholder="login" />
+              <input className="h-9 w-full rounded border px-2" value={editDisplayName} onChange={(e) => setEditDisplayName(e.target.value)} placeholder="display_name" maxLength={64} />
+              <input className="h-9 w-full rounded border px-2" value={editChatUsername} onChange={(e) => setEditChatUsername(e.target.value)} placeholder="chat_username" />
+              <input className="h-9 w-full rounded border px-2" value={editChatEmail} onChange={(e) => setEditChatEmail(e.target.value)} placeholder="chat_email" />
+              <input className="h-9 w-full rounded border px-2" value={editTelegramUsername} onChange={(e) => setEditTelegramUsername(e.target.value)} placeholder="telegram_username" />
+              <input className="h-9 w-full rounded border px-2" value={editPhoto} onChange={(e) => setEditPhoto(e.target.value)} placeholder="photo url" />
+              <select className="h-9 w-full rounded border px-2" value={editAuthProvider} onChange={(e) => setEditAuthProvider(e.target.value)}>
+                <option value="">auto</option><option value="email">email</option><option value="telegram">telegram</option>
+              </select>
+              <input className="h-9 w-full rounded border px-2" value={editPassword} onChange={(e) => setEditPassword(e.target.value)} placeholder="new password" type="password" />
+              <input accept=".jpg,.jpeg,.png,.webp,.bmp,.heic,.svg" onChange={(e) => { setEditAvatarFile(e.target.files?.[0] ?? null); if (e.target.files?.[0]) setRemoveAvatar(false) }} type="file" />
+              <label className="inline-flex items-center gap-2"><input checked={removeAvatar} onChange={(e) => { setRemoveAvatar(e.target.checked); if (e.target.checked) setEditAvatarFile(null) }} type="checkbox" />remove avatar</label>
+              <button className="h-9 w-full rounded bg-primary text-white disabled:opacity-60" disabled={isSaving} onClick={handleSaveUser} type="button">Сохранить</button>
+              <button className="h-9 w-full rounded border border-red-300 text-red-600 disabled:opacity-60" disabled={isSaving} onClick={handleResetPassword} type="button">Сбросить пароль</button>
+            </div>
+          )}
+        </section>
+      </div>
+
+      <section className="rounded-xl border border-gray-200 bg-white p-4 dark:border-[#324467] dark:bg-[#111722]">
+        <div className="mb-2 flex gap-2">
+          <select className="h-9 rounded border px-2" value={chatScope} onChange={(e) => setChatScope(e.target.value as 'all' | ChatScope)}>
+            <option value="all">all</option><option value="global">global</option><option value="private">private</option>
+          </select>
+          <input className="h-9 rounded border px-2" placeholder="user_id" value={chatUserIdFilter} onChange={(e) => setChatUserIdFilter(e.target.value)} />
+          <input className="h-9 rounded border px-2" placeholder="peer_id" value={chatPeerIdFilter} onChange={(e) => setChatPeerIdFilter(e.target.value)} />
+          <button className="h-9 rounded bg-primary px-3 text-white" onClick={() => loadChatAudit(true).catch(() => null)} type="button">refresh</button>
+        </div>
+        {isLoadingChat ? <p>loading chat...</p> : (
+          <div className="max-h-[36vh] overflow-auto">
+            <table className="min-w-full text-sm"><thead><tr><th className="text-left">time</th><th className="text-left">scope</th><th className="text-left">from</th><th className="text-left">to</th><th className="text-left">text</th></tr></thead>
+            <tbody>
+              {chatMessages.map((m) => (
+                <tr key={m.id}>
+                  <td>{formatDateTime(m.created_at)}</td>
+                  <td>{m.scope}</td>
+                  <td>{m.sender_username} ({m.sender_id})</td>
+                  <td>{m.scope === 'global' ? 'all' : `${m.recipient_username || 'user'} (${m.recipient_id ?? '-'})`}</td>
+                  <td>{m.body}</td>
+                </tr>
+              ))}
+            </tbody></table>
+          </div>
+        )}
+      </section>
     </div>
   )
 }

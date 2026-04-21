@@ -1,15 +1,17 @@
-import type { SyntheticEvent } from 'react'
+import type { FormEvent, SyntheticEvent } from 'react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
+import type { ProfileSettingsPayload } from '../types/profile'
 import { isAdminUser } from '../utils/admin'
-import { clearStoredAuth, getStoredUser, refreshStoredAuthUser } from '../utils/auth'
+import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser, storeAuthUser } from '../utils/auth'
 
 const DEFAULT_AVATAR =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
 
 function getDisplayName(user: AuthUser): string {
-  return user.telegram_username || user.username || user.email || 'Пользователь'
+  return user.display_name || user.username || user.telegram_username || user.email || 'User'
 }
 
 function getTelegramId(user: AuthUser): number | null {
@@ -33,9 +35,21 @@ function handleAvatarError(event: SyntheticEvent<HTMLImageElement>): void {
   image.src = DEFAULT_AVATAR
 }
 
+async function parseApiError(response: Response, fallback: string): Promise<string> {
+  const payload = (await response.json().catch(() => null)) as { error?: string } | null
+  return payload?.error || fallback
+}
+
 export default function Profile() {
   const navigate = useNavigate()
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
+  const { totalUnread } = useChatUnreadPing(user)
+  const [profileDisplayName, setProfileDisplayName] = useState('')
+  const [avatarFile, setAvatarFile] = useState<File | null>(null)
+  const [removeAvatar, setRemoveAvatar] = useState(false)
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
+  const [profileError, setProfileError] = useState('')
+  const [profileNotice, setProfileNotice] = useState('')
   const initialExpiry = new Date('2026-04-04T13:33:00')
   const now = new Date()
   const msInDay = 24 * 60 * 60 * 1000
@@ -53,6 +67,17 @@ export default function Profile() {
         // Оставляем данные из localStorage, если сейчас не удалось обновить профиль.
       })
   }, [navigate, user?.id])
+
+  useEffect(() => {
+    if (!user) {
+      return
+    }
+    setProfileDisplayName(user.display_name || '')
+    setRemoveAvatar(false)
+    setAvatarFile(null)
+    setProfileError('')
+    setProfileNotice('')
+  }, [user?.id, user?.display_name])
 
   let expiresAt = initialExpiry
   if (now.getTime() > initialExpiry.getTime()) {
@@ -81,6 +106,69 @@ export default function Profile() {
 
   function handleAdminPanelClick() {
     navigate('/admin')
+  }
+
+  function handleChatClick() {
+    navigate('/chat')
+  }
+
+  async function handleSaveProfileSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!user) {
+      return
+    }
+
+    const normalizedDisplayName = profileDisplayName.trim()
+    const formData = new FormData()
+    formData.append('display_name', normalizedDisplayName)
+    if (avatarFile) {
+      formData.append('avatar', avatarFile)
+    }
+    if (removeAvatar) {
+      formData.append('remove_avatar', 'true')
+    }
+
+    setIsSavingProfile(true)
+    setProfileError('')
+    setProfileNotice('')
+
+    try {
+      const response = await fetch('/api/profile/settings/', {
+        method: 'PATCH',
+        headers: buildAuthHeaders(user),
+        body: formData,
+      })
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          clearStoredAuth()
+          navigate('/auth')
+          return
+        }
+        setProfileError(await parseApiError(response, 'Не удалось сохранить настройки профиля'))
+        return
+      }
+
+      const payload = (await response.json()) as ProfileSettingsPayload
+      const nextUser: AuthUser = {
+        ...user,
+        display_name: payload.display_name,
+        username: payload.username,
+        photo: payload.photo,
+        email: payload.email || user.email,
+        telegram_id: typeof payload.telegram_id === 'number' ? payload.telegram_id : user.telegram_id,
+        telegram_username: payload.telegram_username || user.telegram_username,
+        auth_provider: payload.auth_provider === 'telegram' ? 'telegram' : 'email',
+      }
+      storeAuthUser(nextUser)
+      setUser(nextUser)
+      setAvatarFile(null)
+      setRemoveAvatar(false)
+      setProfileNotice('Профиль обновлен')
+    } catch {
+      setProfileError('Сетевая ошибка при сохранении профиля')
+    } finally {
+      setIsSavingProfile(false)
+    }
   }
 
   if (!user) {
@@ -135,6 +223,23 @@ export default function Profile() {
                   <span className="material-symbols-outlined text-gray-500 dark:text-white">menu_book</span>
                   <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">Руководства</p>
                 </a>
+                <button
+                  className="cursor-pointer rounded-lg px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800/50"
+                  onClick={handleChatClick}
+                  type="button"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="relative inline-flex items-center">
+                      <span className="material-symbols-outlined text-gray-500 dark:text-white">chat</span>
+                      {totalUnread > 0 ? (
+                        <span className="absolute -right-2 -top-1 inline-flex min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                          {totalUnread > 99 ? '99+' : totalUnread}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">Чат</p>
+                  </div>
+                </button>
                 {canViewAdminPanel ? (
                   <button
                     className="cursor-pointer rounded-lg px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800/50"
@@ -158,6 +263,49 @@ export default function Profile() {
                   </div>
                 </button>
               </nav>
+              <form className="flex flex-col gap-2 rounded-lg border border-gray-200 p-3 dark:border-[#324467]" onSubmit={handleSaveProfileSettings}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-[#92a4c9]">Настройки профиля</p>
+                <input
+                  className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
+                  maxLength={64}
+                  onChange={(event) => setProfileDisplayName(event.target.value)}
+                  placeholder="Ник в чате"
+                  value={profileDisplayName}
+                />
+                <input
+                  accept=".jpg,.jpeg,.png,.webp,.bmp,.heic,.svg"
+                  className="block w-full text-xs text-gray-700 dark:text-gray-300 file:mr-2 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1 file:text-xs file:font-semibold file:text-white hover:file:bg-primary/90"
+                  onChange={(event) => {
+                    setAvatarFile(event.target.files?.[0] ?? null)
+                    if (event.target.files?.[0]) {
+                      setRemoveAvatar(false)
+                    }
+                  }}
+                  type="file"
+                />
+                <label className="inline-flex items-center gap-2 text-xs text-gray-600 dark:text-[#92a4c9]">
+                  <input
+                    checked={removeAvatar}
+                    onChange={(event) => {
+                      setRemoveAvatar(event.target.checked)
+                      if (event.target.checked) {
+                        setAvatarFile(null)
+                      }
+                    }}
+                    type="checkbox"
+                  />
+                  Удалить текущий аватар
+                </label>
+                {profileError ? <p className="text-xs text-red-500">{profileError}</p> : null}
+                {profileNotice ? <p className="text-xs text-green-600">{profileNotice}</p> : null}
+                <button
+                  className="h-9 rounded-lg bg-primary px-3 text-xs font-semibold text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isSavingProfile}
+                  type="submit"
+                >
+                  {isSavingProfile ? 'Сохранение...' : 'Сохранить профиль'}
+                </button>
+              </form>
             </div>
           </div>
           <div className="flex flex-col gap-4">
@@ -261,3 +409,4 @@ export default function Profile() {
     </div>
   )
 }
+

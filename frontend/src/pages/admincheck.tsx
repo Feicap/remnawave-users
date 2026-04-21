@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
 import type { PaymentProof, PaymentProofUser, PaymentStatus } from '../types/payment'
 import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser } from '../utils/auth'
@@ -22,9 +23,14 @@ function getTelegramId(user: AuthUser): number | null {
   return null
 }
 
+function getDisplayName(user: AuthUser): string {
+  return user.display_name || user.username || user.telegram_username || user.email || 'Admin'
+}
+
 export default function AdminCheck() {
   const navigate = useNavigate()
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
+  const { totalUnread } = useChatUnreadPing(user)
   const [users, setUsers] = useState<PaymentProofUser[]>([])
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
   const [proofs, setProofs] = useState<PaymentProof[]>([])
@@ -225,6 +231,10 @@ export default function AdminCheck() {
     navigate('/profile')
   }
 
+  function handleChat() {
+    navigate('/chat')
+  }
+
   function handleLogout() {
     clearStoredAuth()
     navigate('/auth')
@@ -248,7 +258,7 @@ export default function AdminCheck() {
               />
               <div className="flex flex-col">
                 <h1 className="text-gray-900 dark:text-white text-base font-medium leading-normal">
-                  {user.username || 'Администратор'}
+                  {getDisplayName(user)}
                 </h1>
                 {user.email ? (
                   <p className="text-gray-500 dark:text-[#92a4c9] text-sm font-normal leading-normal">{user.email}</p>
@@ -276,6 +286,21 @@ export default function AdminCheck() {
             >
               <span className="material-symbols-outlined text-primary dark:text-white">credit_card</span>
               <p className="text-primary dark:text-white text-sm font-medium leading-normal">Проверка оплаты</p>
+            </button>
+            <button
+              onClick={handleChat}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800/50 cursor-pointer text-left"
+              type="button"
+            >
+              <div className="relative inline-flex items-center">
+                <span className="material-symbols-outlined text-gray-500 dark:text-white">chat</span>
+                {totalUnread > 0 ? (
+                  <span className="absolute -right-2 -top-1 inline-flex min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                    {totalUnread > 99 ? '99+' : totalUnread}
+                  </span>
+                ) : null}
+              </div>
+              <p className="text-gray-700 dark:text-white text-sm font-medium leading-normal">Чат</p>
             </button>
             <button
               onClick={handleBackToProfile}
@@ -427,3 +452,4 @@ export default function AdminCheck() {
     </div>
   )
 }
+
