@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
@@ -35,12 +35,12 @@ function getTelegramId(user: AuthUser): number | null {
 
 function formatDateTime(value: string | null): string {
   if (!value) {
-    return 'РќРёРєРѕРіРґР°'
+    return 'Никогда'
   }
 
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) {
-    return 'РќРµРІРµСЂРЅР°СЏ РґР°С‚Р°'
+    return 'Неверная дата'
   }
 
   return date.toLocaleString('ru-RU', {
@@ -58,7 +58,7 @@ async function parseApiError(response: Response, fallback: string): Promise<stri
 }
 
 function formatChatScope(scope: string): string {
-  return scope === 'private' ? 'Р›РёС‡РЅС‹Р№' : 'РћР±С‰РёР№'
+  return scope === 'private' ? 'Личный' : 'Общий'
 }
 
 function RemnawaveIcon({ title }: { title: string }) {
@@ -146,7 +146,7 @@ export default function Admin() {
             navigate('/auth')
             return
           }
-          setError(await parseApiError(response, 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№'))
+          setError(await parseApiError(response, 'Не удалось загрузить пользователей'))
           return
         }
 
@@ -155,7 +155,7 @@ export default function Admin() {
         setMetrics(payload.metrics)
         setError('')
       } catch {
-        setError('РћС€РёР±РєР° СЃРµС‚Рё РїСЂРё Р·Р°РіСЂСѓР·РєРµ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№')
+        setError('Ошибка сети при загрузке пользователей')
       } finally {
         setIsLoading(false)
       }
@@ -196,14 +196,14 @@ export default function Admin() {
             navigate('/auth')
             return
           }
-          setError(await parseApiError(response, 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРѕРѕР±С‰РµРЅРёСЏ С‡Р°С‚Р°'))
+          setError(await parseApiError(response, 'Не удалось загрузить сообщения чата'))
           return
         }
 
         const payload = (await response.json()) as { items: ChatMessageItem[] }
         setChatMessages(payload.items)
       } catch {
-        setError('РћС€РёР±РєР° СЃРµС‚Рё РїСЂРё Р·Р°РіСЂСѓР·РєРµ СЃРѕРѕР±С‰РµРЅРёР№ С‡Р°С‚Р°')
+        setError('Ошибка сети при загрузке сообщений чата')
       } finally {
         setIsChatLoading(false)
       }
@@ -232,7 +232,7 @@ export default function Admin() {
       })
       .catch(() => {
         if (!isCancelled) {
-          setError('РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РїСЂРѕС„РёР»СЊ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°')
+          setError('Не удалось обновить профиль администратора')
         }
       })
 
@@ -247,12 +247,12 @@ export default function Admin() {
     }
 
     loadUsers(true).catch(() => {
-      setError('РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№')
+      setError('Не удалось загрузить пользователей')
     })
 
     const intervalId = window.setInterval(() => {
       loadUsers(false).catch(() => {
-        setError('РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РґР°РЅРЅС‹Рµ Р°РґРјРёРЅРєРё')
+        setError('Не удалось обновить данные админки')
       })
     }, REFRESH_INTERVAL_MS)
 
@@ -267,12 +267,12 @@ export default function Admin() {
     }
 
     loadAdminChat(true).catch(() => {
-      setError('РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРѕРѕР±С‰РµРЅРёСЏ С‡Р°С‚Р°')
+      setError('Не удалось загрузить сообщения чата')
     })
 
     const intervalId = window.setInterval(() => {
       loadAdminChat(false).catch(() => {
-        setError('РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ СЃРѕРѕР±С‰РµРЅРёСЏ С‡Р°С‚Р°')
+        setError('Не удалось обновить сообщения чата')
       })
     }, CHAT_AUDIT_REFRESH_INTERVAL_MS)
 
@@ -307,7 +307,7 @@ export default function Admin() {
   }, [selectedUser])
 
   if (!user || !isAdminUser(user)) {
-    return <div>Loading...</div>
+    return <div>Загрузка...</div>
   }
 
   const telegramId = getTelegramId(user)
@@ -321,7 +321,7 @@ export default function Admin() {
     const payload: Record<string, string> = {}
 
     if (!normalizedLogin) {
-      setError('Р›РѕРіРёРЅ РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РїСѓСЃС‚С‹Рј')
+      setError('Логин не может быть пустым')
       return
     }
     if (normalizedLogin !== selectedUser.login.toLowerCase()) {
@@ -333,7 +333,7 @@ export default function Admin() {
     }
 
     if (!payload.login && !payload.password) {
-      setNotice('РќРµС‚ РёР·РјРµРЅРµРЅРёР№ РґР»СЏ СЃРѕС…СЂР°РЅРµРЅРёСЏ')
+      setNotice('Нет изменений для сохранения')
       return
     }
 
@@ -352,15 +352,15 @@ export default function Admin() {
       })
 
       if (!response.ok) {
-        setError(await parseApiError(response, 'РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РґР°РЅРЅС‹Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ'))
+        setError(await parseApiError(response, 'Не удалось обновить данные пользователя'))
         return
       }
 
       setEditPassword('')
-      setNotice('Р”Р°РЅРЅС‹Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РѕР±РЅРѕРІР»РµРЅС‹')
+      setNotice('Данные пользователя обновлены')
       await loadUsers(false)
     } catch {
-      setError('РћС€РёР±РєР° СЃРµС‚Рё РїСЂРё СЃРѕС…СЂР°РЅРµРЅРёРё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ')
+      setError('Ошибка сети при сохранении пользователя')
     } finally {
       setIsSaving(false)
     }
@@ -371,7 +371,7 @@ export default function Admin() {
       return
     }
 
-    if (!window.confirm(`РЎР±СЂРѕСЃРёС‚СЊ РїР°СЂРѕР»СЊ РґР»СЏ ${selectedUser.login}? РџРѕСЃР»Рµ СЌС‚РѕРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РґРѕР»Р¶РµРЅ РїСЂРѕР№С‚Рё СЂРµРіРёСЃС‚СЂР°С†РёСЋ Р·Р°РЅРѕРІРѕ.`)) {
+    if (!window.confirm(`Сбросить пароль для ${selectedUser.login}? После этого пользователь должен пройти регистрацию заново.`)) {
       return
     }
 
@@ -386,15 +386,15 @@ export default function Admin() {
       })
 
       if (!response.ok) {
-        setError(await parseApiError(response, 'РќРµ СѓРґР°Р»РѕСЃСЊ СЃР±СЂРѕСЃРёС‚СЊ РїР°СЂРѕР»СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ'))
+        setError(await parseApiError(response, 'Не удалось сбросить пароль пользователя'))
         return
       }
 
       setEditPassword('')
-      setNotice('РџР°СЂРѕР»СЊ СѓРґР°Р»С‘РЅ. РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РґРѕР»Р¶РµРЅ Р·Р°СЂРµРіРёСЃС‚СЂРёСЂРѕРІР°С‚СЊСЃСЏ Р·Р°РЅРѕРІРѕ.')
+      setNotice('Пароль удалён. Пользователь должен зарегистрироваться заново.')
       await loadUsers(false)
     } catch {
-      setError('РћС€РёР±РєР° СЃРµС‚Рё РїСЂРё СЃР±СЂРѕСЃРµ РїР°СЂРѕР»СЏ')
+      setError('Ошибка сети при сбросе пароля')
     } finally {
       setIsSaving(false)
     }
@@ -424,7 +424,7 @@ export default function Admin() {
           <div className="flex flex-col gap-8">
             <div className="flex items-center gap-3 px-2">
               <span className="material-symbols-outlined text-3xl text-primary">shield</span>
-              <span className="text-xl font-bold text-gray-900 dark:text-white">РњРѕР№ VPS</span>
+              <span className="text-xl font-bold text-gray-900 dark:text-white">Мой VPS</span>
             </div>
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3 px-3 py-2">
@@ -436,7 +436,7 @@ export default function Admin() {
                 />
                 <div className="flex flex-col">
                   <h1 className="text-base font-medium leading-normal text-gray-900 dark:text-white">
-                    {user.username || 'РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ'}
+                    {user.username || 'Администратор'}
                   </h1>
                   {user.email ? (
                     <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">{user.email}</p>
@@ -451,7 +451,7 @@ export default function Admin() {
               <nav className="flex flex-col gap-2">
                 <a className="flex items-center gap-3 rounded-lg bg-primary/10 px-3 py-2 dark:bg-[#232f48]" href="#">
                   <span className="material-symbols-outlined text-primary dark:text-white">admin_panel_settings</span>
-                  <p className="text-sm font-medium leading-normal text-primary dark:text-white">РђРґРјРёРЅ РїР°РЅРµР»СЊ</p>
+                  <p className="text-sm font-medium leading-normal text-primary dark:text-white">Админ-панель</p>
                 </a>
                 <button
                   className="cursor-pointer rounded-lg px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800/50"
@@ -460,7 +460,7 @@ export default function Admin() {
                 >
                   <div className="flex items-center gap-3">
                     <span className="material-symbols-outlined text-gray-500 dark:text-white">credit_card</span>
-                    <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">РџСЂРѕРІРµСЂРєР° РѕРїР»Р°С‚С‹</p>
+                    <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">Проверка оплаты</p>
                   </div>
                 </button>
                 <button
@@ -498,7 +498,7 @@ export default function Admin() {
                 >
                   <div className="flex items-center gap-3">
                     <span className="material-symbols-outlined text-gray-500 dark:text-white">arrow_back</span>
-                    <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">РћР±СЂР°С‚РЅРѕ РІ РїСЂРѕС„РёР»СЊ</p>
+                    <p className="text-sm font-medium leading-normal text-gray-700 dark:text-white">Обратно в профиль</p>
                   </div>
                 </button>
               </nav>
@@ -509,7 +509,7 @@ export default function Admin() {
             onClick={handleLogout}
             type="button"
           >
-            <span className="truncate">Р’С‹Р№С‚Рё</span>
+            <span className="truncate">Выйти</span>
           </button>
         </div>
       </aside>
@@ -543,218 +543,218 @@ export default function Admin() {
 
           {activeTab === 'users' ? (
             <>
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex flex-col gap-1">
-              <p className="text-4xl font-black leading-tight tracking-[-0.033em] text-gray-900 dark:text-white">
-                РЈРїСЂР°РІР»РµРЅРёРµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏРјРё
-              </p>
-              <p className="text-base font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">
-                РћРЅР»Р°Р№РЅ-Р°РєС‚РёРІРЅРѕСЃС‚СЊ, РґРѕСЃС‚СѓРї Remnawave Рё СѓРїСЂР°РІР»РµРЅРёРµ Р°РІС‚РѕСЂРёР·Р°С†РёРµР№ Р°РєРєР°СѓРЅС‚РѕРІ.
-              </p>
-            </div>
-            <button
-              className="flex h-10 min-w-[84px] cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg bg-primary px-4 text-sm font-bold leading-normal tracking-[0.015em] text-white hover:bg-primary/90"
-              onClick={() => {
-                loadUsers(true).catch(() => {
-                  setError('РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№')
-                })
-              }}
-              type="button"
-            >
-              <span className="material-symbols-outlined text-base">refresh</span>
-              <span className="truncate">РћР±РЅРѕРІРёС‚СЊ</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
-            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Р’СЃРµРіРѕ Р°РєРєР°СѓРЅС‚РѕРІ</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{metrics.total_users}</p>
-            </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-sm text-gray-500 dark:text-[#92a4c9]">РћРЅР»Р°Р№РЅ РЅР° СЃР°Р№С‚Рµ</p>
-              <p className="text-2xl font-bold text-green-600 dark:text-green-400">{metrics.online_users}</p>
-              <p className="text-xs text-gray-500 dark:text-[#92a4c9]">Р—Р° РїРѕСЃР»РµРґРЅРёРµ {metrics.online_window_minutes} РјРёРЅСѓС‚</p>
-            </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Р”РѕСЃС‚СѓРї Рє Remnawave</p>
-              <p className="text-2xl font-bold text-cyan-600 dark:text-cyan-400">{metrics.remnawave_access_users}</p>
-            </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-sm text-gray-500 dark:text-[#92a4c9]">РќСѓР¶РЅР° РїРµСЂРµСЂРµРіРёСЃС‚СЂР°С†РёСЏ</p>
-              <p className="text-2xl font-bold text-red-600 dark:text-red-400">{metrics.users_without_password}</p>
-            </div>
-            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-sm text-gray-500 dark:text-[#92a4c9]">РђРєС‚РёРІРЅС‹ СЃРµРіРѕРґРЅСЏ</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{metrics.active_today}</p>
-            </div>
-          </div>
-
-          {error ? <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div> : null}
-          {notice ? <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">{notice}</div> : null}
-
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-            <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722] xl:col-span-2">
-              <div className="mb-4 flex flex-wrap gap-3">
-                <input
-                  className="h-10 min-w-[220px] flex-1 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="РџРѕРёСЃРє РїРѕ ID, Р»РѕРіРёРЅСѓ РёР»Рё email"
-                  value={search}
-                />
-                <select
-                  className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
-                  onChange={(event) => setFilter(event.target.value as UserFilter)}
-                  value={filter}
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex flex-col gap-1">
+                  <p className="text-4xl font-black leading-tight tracking-[-0.033em] text-gray-900 dark:text-white">
+                    Управление пользователями
+                  </p>
+                  <p className="text-base font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">
+                    Онлайн-активность, доступ Remnawave и управление авторизацией аккаунтов.
+                  </p>
+                </div>
+                <button
+                  className="flex h-10 min-w-[84px] cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg bg-primary px-4 text-sm font-bold leading-normal tracking-[0.015em] text-white hover:bg-primary/90"
+                  onClick={() => {
+                    loadUsers(true).catch(() => {
+                      setError('Не удалось обновить пользователей')
+                    })
+                  }}
+                  type="button"
                 >
-                  <option value="all">Р’СЃРµ</option>
-                  <option value="online">РўРѕР»СЊРєРѕ РѕРЅР»Р°Р№РЅ</option>
-                  <option value="remnawave">РЎ РґРѕСЃС‚СѓРїРѕРј Remnawave</option>
-                  <option value="need-password">Р‘РµР· РїР°СЂРѕР»СЏ</option>
-                </select>
+                  <span className="material-symbols-outlined text-base">refresh</span>
+                  <span className="truncate">Обновить</span>
+                </button>
               </div>
 
-              {isLoading ? (
-                <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Р—Р°РіСЂСѓР·РєР°...</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full">
-                    <thead>
-                      <tr className="border-b border-gray-200 dark:border-[#324467]">
-                        <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ</th>
-                        <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">РЎС‚Р°С‚СѓСЃ</th>
-                        <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">РџР°СЂРѕР»СЊ</th>
-                        <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">РџРѕСЃР»РµРґРЅРёР№ РІС…РѕРґ</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredUsers.map((item) => (
-                        <tr
-                          className={
-                            item.id === selectedUserId
-                              ? 'cursor-pointer border-b border-gray-100 bg-primary/5 dark:border-[#1e2a40] dark:bg-[#1d2b45]'
-                              : 'cursor-pointer border-b border-gray-100 dark:border-[#1e2a40]'
-                          }
-                          key={item.id}
-                          onClick={() => setSelectedUserId(item.id)}
-                        >
-                          <td className="px-3 py-3">
-                            <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-white">
-                              <span>{item.login}</span>
-                              {item.has_remnawave_access ? <RemnawaveIcon title="Р•СЃС‚СЊ РґРѕСЃС‚СѓРї Remnawave" /> : null}
-                            </div>
-                            <p className="text-xs text-gray-500 dark:text-[#92a4c9]">
-                              ID {item.id} вЂў {item.email || 'email РЅРµ Р·Р°РґР°РЅ'}
-                            </p>
-                          </td>
-                          <td className="px-3 py-3 text-sm">
-                            {item.is_online ? (
-                              <span className="inline-flex rounded-full bg-green-500/10 px-2 py-1 text-xs font-semibold text-green-600">
-                                РћРЅР»Р°Р№РЅ
-                              </span>
-                            ) : (
-                              <span className="inline-flex rounded-full bg-gray-500/10 px-2 py-1 text-xs font-semibold text-gray-600">
-                                РќРµ РІ СЃРµС‚Рё
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-3 text-sm">
-                            {item.has_password ? (
-                              <span className="inline-flex rounded-full bg-blue-500/10 px-2 py-1 text-xs font-semibold text-blue-600">
-                                РЈСЃС‚Р°РЅРѕРІР»РµРЅ
-                              </span>
-                            ) : (
-                              <span className="inline-flex rounded-full bg-red-500/10 px-2 py-1 text-xs font-semibold text-red-600">
-                                РЎР±СЂРѕС€РµРЅ
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-3 text-sm text-gray-600 dark:text-[#92a4c9]">{formatDateTime(item.last_login)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+                <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
+                  <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Всего аккаунтов</p>
+                  <p className="text-2xl font-bold text-gray-900 dark:text-white">{metrics.total_users}</p>
                 </div>
-              )}
-            </section>
+                <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
+                  <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Онлайн на сайте</p>
+                  <p className="text-2xl font-bold text-green-600 dark:text-green-400">{metrics.online_users}</p>
+                  <p className="text-xs text-gray-500 dark:text-[#92a4c9]">За последние {metrics.online_window_minutes} минут</p>
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
+                  <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Доступ к Remnawave</p>
+                  <p className="text-2xl font-bold text-cyan-600 dark:text-cyan-400">{metrics.remnawave_access_users}</p>
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
+                  <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Нужна перерегистрация</p>
+                  <p className="text-2xl font-bold text-red-600 dark:text-red-400">{metrics.users_without_password}</p>
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
+                  <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Активны сегодня</p>
+                  <p className="text-2xl font-bold text-gray-900 dark:text-white">{metrics.active_today}</p>
+                </div>
+              </div>
 
-            <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
-              {!selectedUser ? (
-                <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Р’С‹Р±РµСЂРёС‚Рµ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РІ СЃРїРёСЃРєРµ</p>
-              ) : (
-                <div className="flex flex-col gap-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-[#92a4c9]">Р РµРґР°РєС‚РѕСЂ Р°РєРєР°СѓРЅС‚Р°</p>
-                    <div className="mt-1 flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
-                      <span>{selectedUser.login}</span>
-                      {selectedUser.has_remnawave_access ? <RemnawaveIcon title="Р•СЃС‚СЊ РґРѕСЃС‚СѓРї Remnawave" /> : null}
-                    </div>
-                    <p className="text-xs text-gray-500 dark:text-[#92a4c9]">ID: {selectedUser.id}</p>
-                  </div>
+              {error ? <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div> : null}
+              {notice ? <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">{notice}</div> : null}
 
-                  <label className="flex flex-col gap-2">
-                    <span className="text-sm font-medium text-gray-700 dark:text-white">Р›РѕРіРёРЅ (email)</span>
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+                <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722] xl:col-span-2">
+                  <div className="mb-4 flex flex-wrap gap-3">
                     <input
-                      className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
-                      onChange={(event) => setEditLogin(event.target.value)}
-                      type="email"
-                      value={editLogin}
+                      className="h-10 min-w-[220px] flex-1 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Поиск по ID, логину или email"
+                      value={search}
                     />
-                  </label>
-
-                  <label className="flex flex-col gap-2">
-                    <span className="text-sm font-medium text-gray-700 dark:text-white">РќРѕРІС‹Р№ РїР°СЂРѕР»СЊ</span>
-                    <input
+                    <select
                       className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
-                      onChange={(event) => setEditPassword(event.target.value)}
-                      placeholder="РћСЃС‚Р°РІСЊС‚Рµ РїСѓСЃС‚С‹Рј, РµСЃР»Рё РЅРµ РјРµРЅСЏС‚СЊ"
-                      type="password"
-                      value={editPassword}
-                    />
-                  </label>
-
-                  <div className="flex flex-col gap-2">
-                    <button
-                      className="flex h-10 items-center justify-center rounded-lg bg-primary px-3 text-sm font-bold text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={isSaving}
-                      onClick={handleSaveCredentials}
-                      type="button"
+                      onChange={(event) => setFilter(event.target.value as UserFilter)}
+                      value={filter}
                     >
-                      РЎРѕС…СЂР°РЅРёС‚СЊ Р»РѕРіРёРЅ/РїР°СЂРѕР»СЊ
-                    </button>
-                    <button
-                      className="flex h-10 items-center justify-center rounded-lg border border-red-300 px-3 text-sm font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10"
-                      disabled={isSaving}
-                      onClick={handleResetPassword}
-                      type="button"
-                    >
-                      РЎР±СЂРѕСЃРёС‚СЊ Рё СѓРґР°Р»РёС‚СЊ РїР°СЂРѕР»СЊ
-                    </button>
+                      <option value="all">Все</option>
+                      <option value="online">Только онлайн</option>
+                      <option value="remnawave">С доступом Remnawave</option>
+                      <option value="need-password">Без пароля</option>
+                    </select>
                   </div>
 
-                  <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-[#0d1525] dark:text-[#92a4c9]">
-                    <p>Р”Р°С‚Р° СЂРµРіРёСЃС‚СЂР°С†РёРё: {formatDateTime(selectedUser.date_joined)}</p>
-                    <p>РџРѕСЃР»РµРґРЅРёР№ РІС…РѕРґ: {formatDateTime(selectedUser.last_login)}</p>
-                  </div>
-
-                  {selectedUser.subscription_url ? (
-                    <a
-                      className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-100 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-300 dark:hover:bg-cyan-500/20"
-                      href={selectedUser.subscription_url}
-                      rel="noopener noreferrer"
-                      target="_blank"
-                    >
-                      РћС‚РєСЂС‹С‚СЊ СЃСЃС‹Р»РєСѓ Remnawave
-                    </a>
+                  {isLoading ? (
+                    <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Загрузка...</p>
                   ) : (
-                    <div className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500 dark:border-[#324467] dark:text-[#92a4c9]">
-                      РЈ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РЅРµС‚ СЃСЃС‹Р»РєРё Remnawave
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full">
+                        <thead>
+                          <tr className="border-b border-gray-200 dark:border-[#324467]">
+                            <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">Пользователь</th>
+                            <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">Статус</th>
+                            <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">Пароль</th>
+                            <th className="px-3 py-2 text-left text-sm font-semibold text-gray-700 dark:text-white">Последний вход</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredUsers.map((item) => (
+                            <tr
+                              className={
+                                item.id === selectedUserId
+                                  ? 'cursor-pointer border-b border-gray-100 bg-primary/5 dark:border-[#1e2a40] dark:bg-[#1d2b45]'
+                                  : 'cursor-pointer border-b border-gray-100 dark:border-[#1e2a40]'
+                              }
+                              key={item.id}
+                              onClick={() => setSelectedUserId(item.id)}
+                            >
+                              <td className="px-3 py-3">
+                                <div className="flex items-center gap-2 text-sm font-medium text-gray-900 dark:text-white">
+                                  <span>{item.login}</span>
+                                  {item.has_remnawave_access ? <RemnawaveIcon title="Есть доступ Remnawave" /> : null}
+                                </div>
+                                <p className="text-xs text-gray-500 dark:text-[#92a4c9]">
+                                  ID {item.id} • {item.email || 'email не задан'}
+                                </p>
+                              </td>
+                              <td className="px-3 py-3 text-sm">
+                                {item.is_online ? (
+                                  <span className="inline-flex rounded-full bg-green-500/10 px-2 py-1 text-xs font-semibold text-green-600">
+                                    Онлайн
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex rounded-full bg-gray-500/10 px-2 py-1 text-xs font-semibold text-gray-600">
+                                    Не в сети
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-3 py-3 text-sm">
+                                {item.has_password ? (
+                                  <span className="inline-flex rounded-full bg-blue-500/10 px-2 py-1 text-xs font-semibold text-blue-600">
+                                    Установлен
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex rounded-full bg-red-500/10 px-2 py-1 text-xs font-semibold text-red-600">
+                                    Сброшен
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-3 py-3 text-sm text-gray-600 dark:text-[#92a4c9]">{formatDateTime(item.last_login)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
-                </div>
-              )}
-            </section>
-          </div>
+                </section>
+
+                <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
+                  {!selectedUser ? (
+                    <p className="text-sm text-gray-500 dark:text-[#92a4c9]">Выберите пользователя в списке</p>
+                  ) : (
+                    <div className="flex flex-col gap-4">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-[#92a4c9]">Редактор аккаунта</p>
+                        <div className="mt-1 flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+                          <span>{selectedUser.login}</span>
+                          {selectedUser.has_remnawave_access ? <RemnawaveIcon title="Есть доступ Remnawave" /> : null}
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-[#92a4c9]">ID: {selectedUser.id}</p>
+                      </div>
+
+                      <label className="flex flex-col gap-2">
+                        <span className="text-sm font-medium text-gray-700 dark:text-white">Логин (email)</span>
+                        <input
+                          className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
+                          onChange={(event) => setEditLogin(event.target.value)}
+                          type="email"
+                          value={editLogin}
+                        />
+                      </label>
+
+                      <label className="flex flex-col gap-2">
+                        <span className="text-sm font-medium text-gray-700 dark:text-white">Новый пароль</span>
+                        <input
+                          className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
+                          onChange={(event) => setEditPassword(event.target.value)}
+                          placeholder="Оставьте пустым, если не менять"
+                          type="password"
+                          value={editPassword}
+                        />
+                      </label>
+
+                      <div className="flex flex-col gap-2">
+                        <button
+                          className="flex h-10 items-center justify-center rounded-lg bg-primary px-3 text-sm font-bold text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={isSaving}
+                          onClick={handleSaveCredentials}
+                          type="button"
+                        >
+                          Сохранить логин/пароль
+                        </button>
+                        <button
+                          className="flex h-10 items-center justify-center rounded-lg border border-red-300 px-3 text-sm font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10"
+                          disabled={isSaving}
+                          onClick={handleResetPassword}
+                          type="button"
+                        >
+                          Сбросить и удалить пароль
+                        </button>
+                      </div>
+
+                      <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-[#0d1525] dark:text-[#92a4c9]">
+                        <p>Дата регистрации: {formatDateTime(selectedUser.date_joined)}</p>
+                        <p>Последний вход: {formatDateTime(selectedUser.last_login)}</p>
+                      </div>
+
+                      {selectedUser.subscription_url ? (
+                        <a
+                          className="rounded-lg border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-100 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-300 dark:hover:bg-cyan-500/20"
+                          href={selectedUser.subscription_url}
+                          rel="noopener noreferrer"
+                          target="_blank"
+                        >
+                          Открыть ссылку Remnawave
+                        </a>
+                      ) : (
+                        <div className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-500 dark:border-[#324467] dark:text-[#92a4c9]">
+                          У пользователя нет ссылки Remnawave
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+              </div>
             </>
           ) : (
             <section className="rounded-xl border border-gray-200 bg-white p-5 dark:border-[#324467] dark:bg-[#111722]">
@@ -858,4 +858,3 @@ export default function Admin() {
     </div>
   )
 }
-
