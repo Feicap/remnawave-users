@@ -4,6 +4,11 @@ set -euo pipefail
 REPO_URL="${REPO_URL:-https://github.com/Feicap/remnawave-users}"
 APP_DIR="${APP_DIR:-/opt/remnawave-users}"
 ACTIVE_FILE="$APP_DIR/.active_color"
+# Env resolution order:
+# 1) /opt/.env (EXTERNAL_ENV_SOURCE) -> copied to $APP_DIR/.env.prod
+# 2) $APP_DIR/.env.prod
+# 3) $APP_DIR/.env.prod.example -> copied to $APP_DIR/.env.prod
+# Effective runtime env file is $APP_DIR/.env.prod, then synced to $APP_DIR/backend/.env.
 EXTERNAL_ENV_SOURCE="/opt/.env"
 COMPOSE_FILE="$APP_DIR/docker-compose.deploy.yml"
 CERTBOT_WEBROOT="/var/www/certbot"
