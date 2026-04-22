@@ -61,6 +61,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "config.wsgi.application"
+ASGI_APPLICATION = "config.asgi.application"
 
 database_url = os.getenv("DATABASE_URL", "").strip()
 db_ssl_require = os.getenv("DJANGO_DB_SSL_REQUIRE", "True" if not DEBUG else "False").lower() in (

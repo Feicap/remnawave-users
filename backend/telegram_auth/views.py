@@ -15,6 +15,7 @@ from django.utils.dateparse import parse_datetime
 from django.utils import timezone as dj_timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from .chat_realtime import publish_chat_event
 from .models import ChatMessage, ChatModerationAction, ChatReadMarker, ChatUserProfile, PaymentProof
 from .remnawave_client import get_remnawave_user_sync
 from .services import get_telegram_avatar_bytes, has_telegram_config, verify_telegram_auth
@@ -1282,6 +1283,14 @@ def chat_messages(request: HttpRequest) -> JsonResponse:
             messages_query = _filter_messages_by_query_params(ChatMessage.objects.filter(scope=scope), request)
             messages, has_more, next_before_id = _paginate_chat_queryset(messages_query, limit=limit, before_id=before_id)
             _touch_chat_read_marker(user_id=user_id, scope=ChatMessage.SCOPE_GLOBAL)
+            publish_chat_event(
+                {
+                    "event": "read_marker_updated",
+                    "scope": ChatMessage.SCOPE_GLOBAL,
+                    "user_id": user_id,
+                    "peer_id": ChatReadMarker.GLOBAL_PEER_ID,
+                }
+            )
             return JsonResponse(
                 {
                     "scope": scope,
@@ -1307,6 +1316,16 @@ def chat_messages(request: HttpRequest) -> JsonResponse:
         messages_query = _filter_messages_by_query_params(messages_query, request)
         messages, has_more, next_before_id = _paginate_chat_queryset(messages_query, limit=limit, before_id=before_id)
         _touch_chat_read_marker(user_id=user_id, scope=ChatMessage.SCOPE_PRIVATE, peer_id=peer_id)
+        publish_chat_event(
+            {
+                "event": "read_marker_updated",
+                "scope": ChatMessage.SCOPE_PRIVATE,
+                "user_id": user_id,
+                "peer_id": peer_id,
+                "sender_id": user_id,
+                "recipient_id": peer_id,
+            }
+        )
         viewer_marker = ChatReadMarker.objects.filter(
             user_id=user_id,
             scope=ChatMessage.SCOPE_PRIVATE,
@@ -1420,14 +1439,21 @@ def chat_messages(request: HttpRequest) -> JsonResponse:
             scope=ChatMessage.SCOPE_PRIVATE,
             peer_id=user_id,
         ).first()
-    return JsonResponse(
-        _serialize_chat_message(
-            message,
-            viewer_id=user_id,
-            peer_marker_at=peer_marker.last_read_at if peer_marker else None,
-        ),
-        status=201,
+    payload = _serialize_chat_message(
+        message,
+        viewer_id=user_id,
+        peer_marker_at=peer_marker.last_read_at if peer_marker else None,
     )
+    publish_chat_event(
+        {
+            "event": "message_created",
+            "scope": message.scope,
+            "message_id": message.id,
+            "sender_id": message.sender_id,
+            "recipient_id": message.recipient_id,
+        }
+    )
+    return JsonResponse(payload, status=201)
 
 
 @csrf_exempt
@@ -1499,7 +1525,17 @@ def chat_message_item(request: HttpRequest, message_id: int) -> JsonResponse:
             previous_body=previous_body,
             next_body=new_body,
         )
-        return JsonResponse(_serialize_chat_message(message, viewer_id=user_id))
+        payload = _serialize_chat_message(message, viewer_id=user_id)
+        publish_chat_event(
+            {
+                "event": "message_updated",
+                "scope": message.scope,
+                "message_id": message.id,
+                "sender_id": message.sender_id,
+                "recipient_id": message.recipient_id,
+            }
+        )
+        return JsonResponse(payload)
 
     if message.is_deleted:
         return JsonResponse(_serialize_chat_message(message, viewer_id=user_id))
@@ -1520,7 +1556,17 @@ def chat_message_item(request: HttpRequest, message_id: int) -> JsonResponse:
         previous_body=previous_body,
         next_body="",
     )
-    return JsonResponse(_serialize_chat_message(message, viewer_id=user_id))
+    payload = _serialize_chat_message(message, viewer_id=user_id)
+    publish_chat_event(
+        {
+            "event": "message_deleted",
+            "scope": message.scope,
+            "message_id": message.id,
+            "sender_id": message.sender_id,
+            "recipient_id": message.recipient_id,
+        }
+    )
+    return JsonResponse(payload)
 
 
 @csrf_exempt
@@ -1544,6 +1590,14 @@ def chat_read_marker(request: HttpRequest) -> JsonResponse:
 
     if scope == ChatMessage.SCOPE_GLOBAL:
         _touch_chat_read_marker(user_id=user_id, scope=scope)
+        publish_chat_event(
+            {
+                "event": "read_marker_updated",
+                "scope": ChatMessage.SCOPE_GLOBAL,
+                "user_id": user_id,
+                "peer_id": ChatReadMarker.GLOBAL_PEER_ID,
+            }
+        )
         return JsonResponse({"ok": True})
 
     raw_peer_id = str(payload.get("peer_id", "")).strip()
@@ -1553,6 +1607,16 @@ def chat_read_marker(request: HttpRequest) -> JsonResponse:
     if peer_id == user_id:
         return JsonResponse({"error": "Cannot mark yourself as peer"}, status=400)
     _touch_chat_read_marker(user_id=user_id, scope=scope, peer_id=peer_id)
+    publish_chat_event(
+        {
+            "event": "read_marker_updated",
+            "scope": ChatMessage.SCOPE_PRIVATE,
+            "user_id": user_id,
+            "peer_id": peer_id,
+            "sender_id": user_id,
+            "recipient_id": peer_id,
+        }
+    )
     return JsonResponse({"ok": True})
 
 

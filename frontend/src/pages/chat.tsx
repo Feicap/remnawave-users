@@ -1,6 +1,7 @@
 import type { FormEvent, SyntheticEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { useChatRealtime, type ChatRealtimeEvent } from '../hooks/useChatRealtime'
 import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
 import type { ChatMessageItem, ChatMessagesResponse, ChatScope, ChatUserItem } from '../types/chat'
@@ -9,8 +10,8 @@ import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser
 
 const DEFAULT_AVATAR =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
-const USERS_REFRESH_INTERVAL_MS = 10_000
-const MESSAGES_REFRESH_INTERVAL_MS = 4_000
+const REALTIME_REFRESH_DEBOUNCE_MS = 180
+const FALLBACK_SYNC_INTERVAL_MS = 45_000
 
 function getAvatarUrl(photo?: string): string {
   const normalized = withStoredAvatarVersion(photo)
@@ -69,6 +70,19 @@ async function parseApiError(response: Response, fallback: string): Promise<stri
   return payload?.error || fallback
 }
 
+function parseOptionalNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === 'string') {
+    const normalized = Number(value)
+    if (Number.isFinite(normalized)) {
+      return normalized
+    }
+  }
+  return null
+}
+
 export default function Chat() {
   const navigate = useNavigate()
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
@@ -89,6 +103,9 @@ export default function Chat() {
   const [nextBeforeId, setNextBeforeId] = useState<number | null>(null)
   const [error, setError] = useState('')
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const refreshTimerRef = useRef<number | null>(null)
+  const pendingUsersRefreshRef = useRef(false)
+  const pendingMessagesRefreshRef = useRef(false)
   const { totalUnread } = useChatUnreadPing(user)
 
   const selectedPeer = useMemo(
@@ -122,9 +139,12 @@ export default function Chat() {
     navigate('/auth')
   }, [navigate])
 
-  const loadChatUsers = useCallback(async () => {
+  const loadChatUsers = useCallback(async (showLoader: boolean = true) => {
     if (!user) {
       return
+    }
+    if (showLoader) {
+      setIsLoadingUsers(true)
     }
     try {
       const response = await fetch('/api/chat/users/', {
@@ -144,27 +164,33 @@ export default function Chat() {
     } catch {
       setError('Ошибка сети при загрузке пользователей чата')
     } finally {
-      setIsLoadingUsers(false)
+      if (showLoader) {
+        setIsLoadingUsers(false)
+      }
     }
   }, [handleUnauthorized, user])
 
   const loadMessages = useCallback(
-    async (params?: { appendOlder?: boolean; beforeId?: number | null }) => {
+    async (params?: { appendOlder?: boolean; beforeId?: number | null; silent?: boolean }) => {
       if (!user) {
         return
       }
+      const appendOlder = Boolean(params?.appendOlder)
+      const silent = Boolean(params?.silent) && !appendOlder
+
       if (scope === 'private' && selectedPeerId === null) {
         setMessages([])
         setHasMoreMessages(false)
         setNextBeforeId(null)
-        setIsLoadingMessages(false)
+        if (!silent) {
+          setIsLoadingMessages(false)
+        }
         return
       }
 
-      const appendOlder = Boolean(params?.appendOlder)
       if (appendOlder) {
         setIsLoadingOlder(true)
-      } else {
+      } else if (!silent) {
         setIsLoadingMessages(true)
       }
 
@@ -199,12 +225,86 @@ export default function Chat() {
       } catch {
         setError('Ошибка сети при загрузке сообщений')
       } finally {
-        setIsLoadingMessages(false)
-        setIsLoadingOlder(false)
+        if (appendOlder) {
+          setIsLoadingOlder(false)
+        } else if (!silent) {
+          setIsLoadingMessages(false)
+        }
       }
     },
     [handleUnauthorized, messageSearch, scope, selectedPeerId, user],
   )
+
+  const scheduleRealtimeRefresh = useCallback(
+    (target: { users?: boolean; messages?: boolean }) => {
+      if (target.users) {
+        pendingUsersRefreshRef.current = true
+      }
+      if (target.messages) {
+        pendingMessagesRefreshRef.current = true
+      }
+      if (refreshTimerRef.current !== null) {
+        return
+      }
+
+      refreshTimerRef.current = window.setTimeout(() => {
+        refreshTimerRef.current = null
+
+        const shouldRefreshUsers = pendingUsersRefreshRef.current
+        const shouldRefreshMessages = pendingMessagesRefreshRef.current
+        pendingUsersRefreshRef.current = false
+        pendingMessagesRefreshRef.current = false
+
+        const tasks: Promise<void>[] = []
+        if (shouldRefreshUsers) {
+          tasks.push(loadChatUsers(false))
+        }
+        if (shouldRefreshMessages) {
+          tasks.push(loadMessages({ appendOlder: false, silent: true }))
+        }
+
+        if (tasks.length > 0) {
+          void Promise.all(tasks).catch(() => {
+            // Ignore temporary realtime refresh errors.
+          })
+        }
+      }, REALTIME_REFRESH_DEBOUNCE_MS)
+    },
+    [loadChatUsers, loadMessages],
+  )
+
+  const handleRealtimeEvent = useCallback(
+    (event: ChatRealtimeEvent) => {
+      if (!user) {
+        return
+      }
+
+      if (event.scope === 'global') {
+        if (scope === 'global') {
+          scheduleRealtimeRefresh({ messages: true })
+        }
+        return
+      }
+
+      if (event.scope !== 'private') {
+        return
+      }
+
+      const senderId = parseOptionalNumber(event.sender_id)
+      const recipientId = parseOptionalNumber(event.recipient_id)
+      const participants = [senderId, recipientId].filter((item): item is number => item !== null)
+      const isCurrentDialog =
+        scope === 'private' &&
+        selectedPeerId !== null &&
+        participants.includes(user.id) &&
+        participants.includes(selectedPeerId)
+
+      scheduleRealtimeRefresh({ users: true, messages: isCurrentDialog })
+    },
+    [scheduleRealtimeRefresh, scope, selectedPeerId, user],
+  )
+
+  useChatRealtime(user, true, handleRealtimeEvent)
 
   useEffect(() => {
     if (!user) {
@@ -234,20 +334,10 @@ export default function Chat() {
     if (!user) {
       return
     }
-    setIsLoadingUsers(true)
-    loadChatUsers().catch(() => {
+    loadChatUsers(true).catch(() => {
       setError('Не удалось загрузить пользователей чата')
     })
 
-    const intervalId = window.setInterval(() => {
-      loadChatUsers().catch(() => {
-        // Ignore temporary poll errors.
-      })
-    }, USERS_REFRESH_INTERVAL_MS)
-
-    return () => {
-      window.clearInterval(intervalId)
-    }
   }, [loadChatUsers, user])
 
   useEffect(() => {
@@ -275,16 +365,31 @@ export default function Chat() {
       setError('Не удалось загрузить сообщения')
     })
 
+  }, [loadMessages, user])
+
+  useEffect(() => {
+    if (!user) {
+      return
+    }
+
     const intervalId = window.setInterval(() => {
-      loadMessages({ appendOlder: false }).catch(() => {
-        // Ignore temporary poll errors.
+      void Promise.all([loadChatUsers(false), loadMessages({ appendOlder: false, silent: true })]).catch(() => {
+        // Ignore temporary fallback sync errors.
       })
-    }, MESSAGES_REFRESH_INTERVAL_MS)
+    }, FALLBACK_SYNC_INTERVAL_MS)
 
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [loadMessages, user])
+  }, [loadChatUsers, loadMessages, user])
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current !== null) {
+        window.clearTimeout(refreshTimerRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (editingMessageId !== null && !messages.some((item) => item.id === editingMessageId)) {
@@ -347,7 +452,7 @@ export default function Chat() {
         return
       }
       setMessageText('')
-      await Promise.all([loadMessages({ appendOlder: false }), loadChatUsers()])
+      await Promise.all([loadMessages({ appendOlder: false, silent: true }), loadChatUsers(false)])
     } catch {
       setError('Ошибка сети при отправке сообщения')
     } finally {
@@ -388,7 +493,7 @@ export default function Chat() {
       }
       setEditingMessageId(null)
       setEditingText('')
-      await loadMessages({ appendOlder: false })
+      await loadMessages({ appendOlder: false, silent: true })
     } catch {
       setError('Ошибка сети при редактировании сообщения')
     }
@@ -411,7 +516,7 @@ export default function Chat() {
         setError(await parseApiError(response, 'Не удалось удалить сообщение'))
         return
       }
-      await loadMessages({ appendOlder: false })
+      await loadMessages({ appendOlder: false, silent: true })
     } catch {
       setError('Ошибка сети при удалении сообщения')
     }

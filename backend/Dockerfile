@@ -16,5 +16,4 @@ COPY . /app
 
 EXPOSE 8080
 
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8080", "--workers", "3", "--timeout", "60"]
-
+CMD ["gunicorn", "config.asgi:application", "--bind", "0.0.0.0:8080", "--workers", "3", "--worker-class", "uvicorn.workers.UvicornWorker", "--timeout", "60"]

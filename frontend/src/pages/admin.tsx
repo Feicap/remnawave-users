@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { useChatRealtime, type ChatRealtimeEvent } from '../hooks/useChatRealtime'
 import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
 import type { AdminUserItem, AdminUsersMetrics, AdminUsersResponse, ApiError } from '../types/admin'
@@ -8,7 +9,7 @@ import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser
 import { isAdminUser } from '../utils/admin'
 
 const REFRESH_INTERVAL_MS = 30_000
-const CHAT_AUDIT_REFRESH_INTERVAL_MS = 12_000
+const CHAT_REALTIME_DEBOUNCE_MS = 180
 
 const DEFAULT_METRICS: AdminUsersMetrics = {
   total_users: 0,
@@ -18,7 +19,6 @@ const DEFAULT_METRICS: AdminUsersMetrics = {
   users_without_password: 0,
   active_today: 0,
 }
-
 type UserFilter = 'all' | 'online' | 'remnawave' | 'need-password'
 type AdminTab = 'users' | 'moderation'
 
@@ -99,6 +99,7 @@ export default function Admin() {
   const [chatUserFilter, setChatUserFilter] = useState('')
   const [chatPeerFilter, setChatPeerFilter] = useState('')
   const [isChatLoading, setIsChatLoading] = useState(false)
+  const chatRealtimeTimerRef = useRef<number | null>(null)
 
   const selectedUser = useMemo(
     () => users.find((item) => item.id === selectedUserId) ?? null,
@@ -205,11 +206,44 @@ export default function Admin() {
       } catch {
         setError('Ошибка сети при загрузке сообщений чата')
       } finally {
-        setIsChatLoading(false)
+        if (showLoader) {
+          setIsChatLoading(false)
+        }
       }
     },
     [chatPeerFilter, chatScopeFilter, chatUserFilter, navigate, user],
   )
+
+  const scheduleAdminChatRefresh = useCallback(() => {
+    if (activeTab !== 'moderation') {
+      return
+    }
+    if (chatRealtimeTimerRef.current !== null) {
+      return
+    }
+
+    chatRealtimeTimerRef.current = window.setTimeout(() => {
+      chatRealtimeTimerRef.current = null
+      loadAdminChat(false).catch(() => {
+        // Ignore temporary realtime refresh errors.
+      })
+    }, CHAT_REALTIME_DEBOUNCE_MS)
+  }, [activeTab, loadAdminChat])
+
+  const handleAdminRealtimeEvent = useCallback(
+    (event: ChatRealtimeEvent) => {
+      if (activeTab !== 'moderation') {
+        return
+      }
+      if (event.scope !== 'global' && event.scope !== 'private') {
+        return
+      }
+      scheduleAdminChatRefresh()
+    },
+    [activeTab, scheduleAdminChatRefresh],
+  )
+
+  useChatRealtime(user, Boolean(user && isAdminUser(user) && activeTab === 'moderation'), handleAdminRealtimeEvent)
 
   useEffect(() => {
     const storedUser = getStoredUser()
@@ -269,17 +303,15 @@ export default function Admin() {
     loadAdminChat(true).catch(() => {
       setError('Не удалось загрузить сообщения чата')
     })
-
-    const intervalId = window.setInterval(() => {
-      loadAdminChat(false).catch(() => {
-        setError('Не удалось обновить сообщения чата')
-      })
-    }, CHAT_AUDIT_REFRESH_INTERVAL_MS)
-
-    return () => {
-      window.clearInterval(intervalId)
-    }
   }, [activeTab, loadAdminChat, user])
+
+  useEffect(() => {
+    return () => {
+      if (chatRealtimeTimerRef.current !== null) {
+        window.clearTimeout(chatRealtimeTimerRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (users.length === 0) {
