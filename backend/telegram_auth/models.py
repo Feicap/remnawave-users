@@ -1,5 +1,6 @@
 from django.db import models
 from django.db.models import Q
+from django.contrib.auth.models import User
 from django.utils import timezone
 
 
@@ -50,6 +51,33 @@ class ChatUserProfile(models.Model):
     def __str__(self) -> str:
         display = self.display_name or self.telegram_username or self.username or self.email or str(self.user_id)
         return f"{self.user_id} - {display}"
+
+
+class AuthIdentity(models.Model):
+    PROVIDER_EMAIL = "email"
+    PROVIDER_TELEGRAM = "telegram"
+    PROVIDER_CHOICES = (
+        (PROVIDER_EMAIL, "Email"),
+        (PROVIDER_TELEGRAM, "Telegram"),
+    )
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="auth_identities")
+    provider = models.CharField(max_length=16, choices=PROVIDER_CHOICES, db_index=True)
+    provider_user_id = models.CharField(max_length=255, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["provider", "provider_user_id"], name="uniq_auth_identity_provider_key"),
+            models.UniqueConstraint(fields=["user", "provider"], name="uniq_auth_identity_user_provider"),
+        ]
+        indexes = [
+            models.Index(fields=["user", "provider"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.provider}:{self.provider_user_id} -> {self.user_id}"
 
 
 class ChatMessage(models.Model):

@@ -16,7 +16,7 @@ from django.utils import timezone as dj_timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from .chat_realtime import publish_chat_event
-from .models import ChatMessage, ChatModerationAction, ChatReadMarker, ChatUserProfile, PaymentProof
+from .models import AuthIdentity, ChatMessage, ChatModerationAction, ChatReadMarker, ChatUserProfile, PaymentProof
 from .remnawave_client import get_remnawave_user_sync
 from .services import get_telegram_avatar_bytes, has_telegram_config, verify_telegram_auth
 
@@ -38,6 +38,59 @@ def _normalize_email(value: str) -> str:
     return value.strip().lower()
 
 
+def _telegram_identity_key(telegram_id: int) -> str:
+    return str(telegram_id)
+
+
+def _find_identity(*, provider: str, provider_user_id: str) -> AuthIdentity | None:
+    return AuthIdentity.objects.select_related("user").filter(provider=provider, provider_user_id=provider_user_id).first()
+
+
+def _find_user_by_identity(*, provider: str, provider_user_id: str) -> User | None:
+    identity = _find_identity(provider=provider, provider_user_id=provider_user_id)
+    return identity.user if identity is not None else None
+
+
+def _ensure_identity(
+    *,
+    user: User,
+    provider: str,
+    provider_user_id: str | None,
+    strict: bool = False,
+) -> tuple[bool, JsonResponse | None]:
+    normalized_key = (provider_user_id or "").strip()
+    if not normalized_key:
+        return True, None
+
+    existing = _find_identity(provider=provider, provider_user_id=normalized_key)
+    if existing is not None and existing.user_id != user.id:
+        if strict:
+            return False, JsonResponse({"error": f"{provider.capitalize()} identity already linked to another account"}, status=409)
+        return False, None
+
+    current_provider_identity = AuthIdentity.objects.filter(user=user, provider=provider).first()
+    if current_provider_identity is not None:
+        if current_provider_identity.provider_user_id == normalized_key:
+            return True, None
+        conflict = _find_identity(provider=provider, provider_user_id=normalized_key)
+        if conflict is not None and conflict.id != current_provider_identity.id:
+            if strict:
+                return False, JsonResponse({"error": f"{provider.capitalize()} identity already linked to another account"}, status=409)
+            return False, None
+        current_provider_identity.provider_user_id = normalized_key
+        current_provider_identity.save(update_fields=["provider_user_id", "updated_at"])
+        return True, None
+
+    if existing is None:
+        AuthIdentity.objects.create(user=user, provider=provider, provider_user_id=normalized_key)
+    return True, None
+
+
+def _get_auth_bindings_for_user(user_id: int) -> tuple[bool, bool]:
+    providers = set(AuthIdentity.objects.filter(user_id=user_id).values_list("provider", flat=True))
+    return AuthIdentity.PROVIDER_EMAIL in providers, AuthIdentity.PROVIDER_TELEGRAM in providers
+
+
 def _validate_email_credentials(payload: dict) -> tuple[str | None, str | None, JsonResponse | None]:
     email = _normalize_email(str(payload.get("email", "")))
     password = str(payload.get("password", ""))
@@ -54,7 +107,11 @@ def _validate_email_credentials(payload: dict) -> tuple[str | None, str | None, 
 
 
 def _find_user_by_email(email: str) -> User | None:
-    return User.objects.filter(Q(email__iexact=email) | Q(username__iexact=email)).first()
+    normalized_email = _normalize_email(email)
+    by_identity = _find_user_by_identity(provider=AuthIdentity.PROVIDER_EMAIL, provider_user_id=normalized_email)
+    if by_identity is not None:
+        return by_identity
+    return User.objects.filter(Q(email__iexact=normalized_email) | Q(username__iexact=normalized_email)).first()
 
 
 def _find_user_by_id_or_email(*, user_id: int | None = None, email: str | None = None) -> User | None:
@@ -71,6 +128,21 @@ def _find_profile_by_telegram_id(telegram_id: int | None) -> ChatUserProfile | N
     if telegram_id is None:
         return None
     return ChatUserProfile.objects.filter(telegram_id=telegram_id).first()
+
+
+def _find_user_by_telegram_id(telegram_id: int | None) -> User | None:
+    if telegram_id is None:
+        return None
+    by_identity = _find_user_by_identity(
+        provider=AuthIdentity.PROVIDER_TELEGRAM,
+        provider_user_id=_telegram_identity_key(telegram_id),
+    )
+    if by_identity is not None:
+        return by_identity
+    profile = _find_profile_by_telegram_id(telegram_id)
+    if profile is None:
+        return None
+    return User.objects.filter(id=profile.user_id).first()
 
 
 def _parse_optional_any_int(value: object | None) -> int | None:
@@ -95,16 +167,36 @@ def _ensure_auth_user(
     email: str | None,
     telegram_id: int | None,
 ) -> User | None:
-    user_by_email = _find_user_by_email(email) if email else None
-    profile_by_telegram = _find_profile_by_telegram_id(telegram_id)
-    user_by_telegram = User.objects.filter(id=profile_by_telegram.user_id).first() if profile_by_telegram else None
+    normalized_email = _normalize_email(email) if email else None
+    user_by_email_identity = (
+        _find_user_by_identity(provider=AuthIdentity.PROVIDER_EMAIL, provider_user_id=normalized_email)
+        if normalized_email
+        else None
+    )
+    user_by_telegram_identity = (
+        _find_user_by_identity(
+            provider=AuthIdentity.PROVIDER_TELEGRAM,
+            provider_user_id=_telegram_identity_key(telegram_id),
+        )
+        if telegram_id is not None
+        else None
+    )
+    user_by_email = _find_user_by_email(normalized_email) if normalized_email else None
+    user_by_telegram = _find_user_by_telegram_id(telegram_id)
     user_by_hint = User.objects.filter(id=user_id_hint).first() if user_id_hint is not None else None
     legacy_profile = ChatUserProfile.objects.filter(user_id=user_id_hint).first() if user_id_hint is not None else None
 
-    user = user_by_email or user_by_telegram or user_by_hint
+    if (
+        user_by_email_identity is not None
+        and user_by_telegram_identity is not None
+        and user_by_email_identity.id != user_by_telegram_identity.id
+    ):
+        user = user_by_email_identity if normalized_email else user_by_telegram_identity
+    else:
+        user = user_by_email_identity or user_by_telegram_identity or user_by_email or user_by_telegram or user_by_hint
     if user is None:
-        if email:
-            login = email
+        if normalized_email:
+            login = normalized_email
         elif telegram_id is not None:
             login = _build_unique_telegram_login(telegram_id)
         else:
@@ -115,9 +207,9 @@ def _ensure_auth_user(
             and legacy_profile is not None
             and User.objects.filter(id=user_id_hint).first() is None
         )
-        user = User(id=user_id_hint, username=login, email=email or "") if should_preserve_legacy_id else User(
+        user = User(id=user_id_hint, username=login, email=normalized_email or "") if should_preserve_legacy_id else User(
             username=login,
-            email=email or "",
+            email=normalized_email or "",
         )
         user.set_unusable_password()
         if should_preserve_legacy_id:
@@ -129,7 +221,6 @@ def _ensure_auth_user(
         else:
             user.save()
 
-    normalized_email = _normalize_email(email) if email else ""
     update_fields: list[str] = []
     if normalized_email and user.email.lower() != normalized_email:
         user.email = normalized_email
@@ -147,6 +238,21 @@ def _ensure_auth_user(
 
     if update_fields:
         user.save(update_fields=list(dict.fromkeys(update_fields)))
+
+    if normalized_email:
+        _ensure_identity(
+            user=user,
+            provider=AuthIdentity.PROVIDER_EMAIL,
+            provider_user_id=normalized_email,
+            strict=False,
+        )
+    if telegram_id is not None:
+        _ensure_identity(
+            user=user,
+            provider=AuthIdentity.PROVIDER_TELEGRAM,
+            provider_user_id=_telegram_identity_key(telegram_id),
+            strict=False,
+        )
     return user
 
 
@@ -181,10 +287,6 @@ def _parse_optional_bool(value: object | None) -> bool | None:
     return None
 
 
-def _telegram_avatar_proxy_url(telegram_id: int) -> str:
-    return f"/api/auth/telegram-avatar/{telegram_id}/"
-
-
 def _build_auth_payload(
     *,
     user_id: int,
@@ -209,11 +311,13 @@ def _build_auth_payload(
         subscription_url
     )
 
-    # Для email-входа с привязанным Telegram всегда тянем актуальный аватар по telegram_id.
-    if auth_provider == "email" and resolved_telegram_id is not None:
-        resolved_photo = _telegram_avatar_proxy_url(resolved_telegram_id)
+    has_email_auth, has_telegram_auth = _get_auth_bindings_for_user(user_id)
+    if resolved_email:
+        has_email_auth = True
+    if resolved_telegram_id is not None:
+        has_telegram_auth = True
 
-    display_username = resolved_telegram_username or resolved_email or username or ""
+    display_username = username or resolved_telegram_username or resolved_email or ""
 
     payload = {
         "id": user_id,
@@ -221,6 +325,10 @@ def _build_auth_payload(
         "photo": resolved_photo or "",
         "token": "FAKE_JWT",
         "auth_provider": auth_provider,
+        "has_email_auth": has_email_auth,
+        "has_telegram_auth": has_telegram_auth,
+        "can_link_email": not has_email_auth,
+        "can_link_telegram": not has_telegram_auth,
     }
     if resolved_email:
         payload["email"] = resolved_email
@@ -732,6 +840,22 @@ def _validate_chat_display_name(display_name: str, *, user_id: int) -> JsonRespo
     return None
 
 
+def _attach_binding_flags(payload: dict, *, user_id: int) -> dict:
+    has_email_auth, has_telegram_auth = _get_auth_bindings_for_user(user_id)
+    email_value = _normalize_optional_text(payload.get("email"))
+    telegram_value = payload.get("telegram_id")
+    if email_value:
+        has_email_auth = True
+    if telegram_value is not None:
+        has_telegram_auth = True
+
+    payload["has_email_auth"] = has_email_auth
+    payload["has_telegram_auth"] = has_telegram_auth
+    payload["can_link_email"] = not has_email_auth
+    payload["can_link_telegram"] = not has_telegram_auth
+    return payload
+
+
 def _serialize_profile_settings(*, user_id: int, profile: ChatUserProfile, telegram_id: int | None = None) -> dict:
     django_user = User.objects.filter(id=user_id).only("username", "email").first()
     email = profile.email or (django_user.email if django_user else "")
@@ -743,7 +867,7 @@ def _serialize_profile_settings(*, user_id: int, profile: ChatUserProfile, teleg
         email=email,
         telegram_username=profile.telegram_username,
     )
-    return {
+    payload = {
         "id": user_id,
         "display_name": profile.display_name,
         "username": display_name,
@@ -753,6 +877,7 @@ def _serialize_profile_settings(*, user_id: int, profile: ChatUserProfile, teleg
         "telegram_username": profile.telegram_username,
         "auth_provider": profile.auth_provider or "email",
     }
+    return _attach_binding_flags(payload, user_id=user_id)
 
 
 def _apply_profile_to_auth_payload(payload: dict, profile: ChatUserProfile) -> dict:
@@ -764,7 +889,27 @@ def _apply_profile_to_auth_payload(payload: dict, profile: ChatUserProfile) -> d
     if profile.telegram_id is not None:
         payload["telegram_id"] = profile.telegram_id
     payload["display_name"] = profile.display_name
-    return payload
+    return _attach_binding_flags(payload, user_id=profile.user_id)
+
+
+def _parse_telegram_auth_payload(request: HttpRequest) -> tuple[dict | None, JsonResponse | None]:
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        return None, JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    if not isinstance(payload, dict):
+        return None, JsonResponse({"error": "Invalid payload"}, status=400)
+    if not has_telegram_config():
+        return None, JsonResponse({"error": "Server Telegram config missing"}, status=500)
+    if not verify_telegram_auth(payload):
+        return None, JsonResponse({"error": "Invalid Telegram auth"}, status=403)
+    if time() - int(payload.get("auth_date", 0)) > 86400:
+        return None, JsonResponse({"error": "Auth expired"}, status=403)
+    telegram_id = _parse_optional_any_int(payload.get("id"))
+    if telegram_id is None:
+        return None, JsonResponse({"error": "Telegram id is required"}, status=400)
+    return payload, None
 
 
 @csrf_exempt
@@ -772,36 +917,47 @@ def telegram_login(request: HttpRequest) -> JsonResponse:
     if request.method != "POST":
         return JsonResponse({"error": "Invalid method"}, status=405)
 
-    try:
-        user = json.loads(request.body)
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    user, telegram_payload_error = _parse_telegram_auth_payload(request)
+    if telegram_payload_error is not None or user is None:
+        return telegram_payload_error or JsonResponse({"error": "Invalid Telegram payload"}, status=400)
 
-    if not has_telegram_config():
-        return JsonResponse({"error": "Server Telegram config missing"}, status=500)
+    telegram_id_value = _parse_optional_any_int(user.get("id"))
+    if telegram_id_value is None:
+        return JsonResponse({"error": "Telegram id is required"}, status=400)
 
-    if not verify_telegram_auth(user):
-        return JsonResponse({"error": "Invalid Telegram auth"}, status=403)
-
-    if time() - int(user.get("auth_date", 0)) > 86400:
-        return JsonResponse({"error": "Auth expired"}, status=403)
-
-    remnawave_user = _resolve_remnawave_user(telegram_id=user["id"])
+    remnawave_user = _resolve_remnawave_user(telegram_id=telegram_id_value)
     resolved_email = _normalize_optional_text((remnawave_user or {}).get("email"))
     auth_user = _ensure_auth_user(
-        user_id_hint=_parse_optional_any_int(user.get("id")),
+        user_id_hint=telegram_id_value,
         email=_normalize_email(resolved_email) if resolved_email else None,
-        telegram_id=_parse_optional_any_int(user.get("id")),
+        telegram_id=telegram_id_value,
     )
     if auth_user is None:
         return JsonResponse({"error": "Unable to resolve account"}, status=500)
+    _, telegram_identity_error = _ensure_identity(
+        user=auth_user,
+        provider=AuthIdentity.PROVIDER_TELEGRAM,
+        provider_user_id=_telegram_identity_key(telegram_id_value) if telegram_id_value is not None else None,
+        strict=True,
+    )
+    if telegram_identity_error is not None:
+        return telegram_identity_error
+    if resolved_email:
+        _, email_identity_error = _ensure_identity(
+            user=auth_user,
+            provider=AuthIdentity.PROVIDER_EMAIL,
+            provider_user_id=_normalize_email(resolved_email),
+            strict=True,
+        )
+        if email_identity_error is not None:
+            return email_identity_error
 
     response = _build_auth_response(
         user_id=auth_user.id,
         username=user.get("username") or "",
         photo=user.get("photo_url") or "",
         email=auth_user.email or resolved_email,
-        telegram_id=user["id"],
+        telegram_id=telegram_id_value,
         telegram_username=user.get("username") or None,
         auth_provider="telegram",
         remnawave_user=remnawave_user,
@@ -811,7 +967,7 @@ def telegram_login(request: HttpRequest) -> JsonResponse:
         user_id=auth_user.id,
         username=response_payload.get("username", "") or (auth_user.email or auth_user.username or ""),
         email=response_payload.get("email") or auth_user.email or resolved_email,
-        telegram_id=_parse_optional_any_int(user.get("id")),
+        telegram_id=telegram_id_value,
         telegram_username=response_payload.get("telegram_username", "") or user.get("username") or "",
         photo=response_payload.get("photo", "") or user.get("photo_url") or "",
         auth_provider="telegram",
@@ -868,6 +1024,14 @@ def email_register(request: HttpRequest) -> JsonResponse:
 
         remnawave_user = _resolve_remnawave_user(email=email)
         remnawave_telegram_id = _parse_optional_any_int((remnawave_user or {}).get("telegram_id"))
+        _, email_identity_error = _ensure_identity(
+            user=existing_user,
+            provider=AuthIdentity.PROVIDER_EMAIL,
+            provider_user_id=email,
+            strict=True,
+        )
+        if email_identity_error is not None:
+            return email_identity_error
         profile = _upsert_chat_profile(
             user_id=existing_user.id,
             username=existing_user.email or existing_user.username,
@@ -893,6 +1057,14 @@ def email_register(request: HttpRequest) -> JsonResponse:
         email=email,
         password=password,
     )
+    _, email_identity_error = _ensure_identity(
+        user=user,
+        provider=AuthIdentity.PROVIDER_EMAIL,
+        provider_user_id=email,
+        strict=True,
+    )
+    if email_identity_error is not None:
+        return email_identity_error
     _touch_user_last_login(user_id=user.id)
     remnawave_user = _resolve_remnawave_user(email=email)
     remnawave_telegram_id = _parse_optional_any_int((remnawave_user or {}).get("telegram_id"))
@@ -937,6 +1109,15 @@ def email_login(request: HttpRequest) -> JsonResponse:
 
     if not user.check_password(password):
         return JsonResponse({"error": "Invalid password"}, status=403)
+
+    _, email_identity_error = _ensure_identity(
+        user=user,
+        provider=AuthIdentity.PROVIDER_EMAIL,
+        provider_user_id=email,
+        strict=True,
+    )
+    if email_identity_error is not None:
+        return email_identity_error
 
     _touch_user_last_login(user_id=user.id)
     remnawave_user = _resolve_remnawave_user(email=email)
@@ -1001,6 +1182,159 @@ def auth_me(request: HttpRequest) -> JsonResponse:
     if resolved_auth_provider == "email":
         _touch_user_last_login(user_id=resolved_user_id, email=resolved_email)
     return JsonResponse(response_payload)
+
+
+@csrf_exempt
+def auth_link_email(request: HttpRequest) -> JsonResponse:
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid method"}, status=405)
+
+    user_id, current_email, telegram_id, username, telegram_username, photo, auth_provider = _extract_auth_identity(request)
+    auth_user = _ensure_auth_user(user_id_hint=user_id, email=current_email, telegram_id=telegram_id)
+    if auth_user is None:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    if not isinstance(payload, dict):
+        return JsonResponse({"error": "Invalid payload"}, status=400)
+
+    email, password, error_response = _validate_email_credentials(payload)
+    if error_response is not None or email is None or password is None:
+        return error_response or JsonResponse({"error": "Invalid credentials"}, status=400)
+    if len(password) < 6:
+        return JsonResponse({"error": "Password must be at least 6 characters"}, status=400)
+
+    conflicting_user = (
+        User.objects.filter(Q(email__iexact=email) | Q(username__iexact=email))
+        .exclude(id=auth_user.id)
+        .first()
+    )
+    if conflicting_user is not None:
+        return JsonResponse({"error": "Email already used by another account"}, status=409)
+
+    _, identity_error = _ensure_identity(
+        user=auth_user,
+        provider=AuthIdentity.PROVIDER_EMAIL,
+        provider_user_id=email,
+        strict=True,
+    )
+    if identity_error is not None:
+        return identity_error
+
+    updated_user_fields: list[str] = []
+    if auth_user.email.lower() != email:
+        auth_user.email = email
+        updated_user_fields.append("email")
+    if auth_user.username != email:
+        auth_user.username = email
+        updated_user_fields.append("username")
+    auth_user.set_password(password)
+    updated_user_fields.append("password")
+    auth_user.last_login = dj_timezone.now()
+    updated_user_fields.append("last_login")
+    auth_user.save(update_fields=list(dict.fromkeys(updated_user_fields)))
+
+    remnawave_user = _resolve_remnawave_user(email=email, telegram_id=telegram_id)
+    profile = _upsert_chat_profile(
+        user_id=auth_user.id,
+        username=auth_user.email or auth_user.username,
+        email=auth_user.email or email,
+        telegram_id=telegram_id,
+        telegram_username=telegram_username,
+        photo=photo,
+        auth_provider=auth_provider or ("telegram" if telegram_id is not None else "email"),
+    )
+    response_payload = json.loads(
+        _build_auth_response(
+            user_id=auth_user.id,
+            username=auth_user.email or auth_user.username,
+            photo=photo,
+            email=auth_user.email or email,
+            telegram_id=telegram_id,
+            telegram_username=telegram_username or (username if auth_provider == "telegram" else None),
+            auth_provider=profile.auth_provider or auth_provider or "email",
+            remnawave_user=remnawave_user,
+        ).content
+    )
+    return JsonResponse(_apply_profile_to_auth_payload(response_payload, profile))
+
+
+@csrf_exempt
+def auth_link_telegram(request: HttpRequest) -> JsonResponse:
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid method"}, status=405)
+
+    user_id, email, _, _, _, photo, auth_provider = _extract_auth_identity(request)
+    auth_user = _ensure_auth_user(user_id_hint=user_id, email=email, telegram_id=None)
+    if auth_user is None:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+
+    telegram_payload, telegram_payload_error = _parse_telegram_auth_payload(request)
+    if telegram_payload_error is not None or telegram_payload is None:
+        return telegram_payload_error or JsonResponse({"error": "Invalid Telegram payload"}, status=400)
+
+    telegram_id = _parse_optional_any_int(telegram_payload.get("id"))
+    if telegram_id is None:
+        return JsonResponse({"error": "Telegram id is required"}, status=400)
+
+    _, telegram_identity_error = _ensure_identity(
+        user=auth_user,
+        provider=AuthIdentity.PROVIDER_TELEGRAM,
+        provider_user_id=_telegram_identity_key(telegram_id),
+        strict=True,
+    )
+    if telegram_identity_error is not None:
+        return telegram_identity_error
+
+    remnawave_user = _resolve_remnawave_user(
+        email=_normalize_email(auth_user.email) if auth_user.email else None,
+        telegram_id=telegram_id,
+    )
+    resolved_email = _normalize_optional_text((remnawave_user or {}).get("email")) or _normalize_optional_text(auth_user.email)
+    if resolved_email and auth_user.email.lower() != _normalize_email(resolved_email):
+        auth_user.email = _normalize_email(resolved_email)
+        if not auth_user.username or auth_user.username.startswith("tg_"):
+            auth_user.username = auth_user.email
+            auth_user.save(update_fields=["email", "username"])
+        else:
+            auth_user.save(update_fields=["email"])
+    if resolved_email:
+        _, email_identity_error = _ensure_identity(
+            user=auth_user,
+            provider=AuthIdentity.PROVIDER_EMAIL,
+            provider_user_id=_normalize_email(resolved_email),
+            strict=False,
+        )
+        if email_identity_error is not None:
+            return email_identity_error
+
+    profile = _upsert_chat_profile(
+        user_id=auth_user.id,
+        username=auth_user.email or auth_user.username,
+        email=resolved_email or auth_user.email,
+        telegram_id=telegram_id,
+        telegram_username=_normalize_optional_text(telegram_payload.get("username")) or "",
+        photo=_normalize_optional_text(telegram_payload.get("photo_url")) or photo,
+        auth_provider=auth_provider or "telegram",
+    )
+
+    response_payload = json.loads(
+        _build_auth_response(
+            user_id=auth_user.id,
+            username=auth_user.email or auth_user.username,
+            photo=_normalize_optional_text(telegram_payload.get("photo_url")) or photo,
+            email=resolved_email or auth_user.email,
+            telegram_id=telegram_id,
+            telegram_username=_normalize_optional_text(telegram_payload.get("username")) or None,
+            auth_provider=profile.auth_provider or auth_provider or "telegram",
+            remnawave_user=remnawave_user,
+        ).content
+    )
+    return JsonResponse(_apply_profile_to_auth_payload(response_payload, profile))
 
 
 @csrf_exempt

@@ -9,6 +9,8 @@ from .views import (
     admin_update_payment_proof,
     admin_update_user_credentials,
     admin_users,
+    auth_link_email,
+    auth_link_telegram,
     auth_me,
     chat_messages,
     chat_message_item,
@@ -30,6 +32,8 @@ from .views import (
 urlpatterns = [
     path("health/", health_check, name="health_check"),
     path("auth/me/", auth_me, name="auth_me"),
+    path("auth/link/email/", auth_link_email, name="auth_link_email"),
+    path("auth/link/telegram/", auth_link_telegram, name="auth_link_telegram"),
     path("auth/email/check/", email_check, name="email_check"),
     path("auth/email/login/", email_login, name="email_login"),
     path("auth/email/register/", email_register, name="email_register"),

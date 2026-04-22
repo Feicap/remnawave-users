@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 
-from telegram_auth.models import ChatUserProfile
+from telegram_auth.models import AuthIdentity, ChatUserProfile
 from telegram_auth import views
 
 
@@ -262,3 +262,80 @@ class AuthIdentityBindingTests(TestCase):
 
         stale_profile.refresh_from_db()
         self.assertIsNone(stale_profile.telegram_id)
+
+    @patch("telegram_auth.views._resolve_remnawave_user", return_value=None)
+    @patch("telegram_auth.views.verify_telegram_auth", return_value=True)
+    @patch("telegram_auth.views.has_telegram_config", return_value=True)
+    def test_link_telegram_to_email_account(self, _has_telegram_config, _verify_telegram_auth, _resolve_remnawave):
+        user = User.objects.create_user(username="link@example.com", email="link@example.com", password="secret123")
+        headers = _auth_headers(user.id, "link@example.com", "link@example.com")
+
+        response = self.client.post(
+            "/api/auth/link/telegram/",
+            data={"id": 880011, "username": "tg_linked", "auth_date": str(int(views.time()))},
+            content_type="application/json",
+            **headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["id"], user.id)
+        self.assertEqual(payload["telegram_id"], 880011)
+        self.assertTrue(payload["has_email_auth"])
+        self.assertTrue(payload["has_telegram_auth"])
+        self.assertFalse(payload["can_link_telegram"])
+
+        profile = ChatUserProfile.objects.get(user_id=user.id)
+        self.assertEqual(profile.telegram_id, 880011)
+        self.assertEqual(profile.telegram_username, "tg_linked")
+        self.assertTrue(AuthIdentity.objects.filter(user_id=user.id, provider="email", provider_user_id="link@example.com").exists())
+        self.assertTrue(AuthIdentity.objects.filter(user_id=user.id, provider="telegram", provider_user_id="880011").exists())
+
+    def test_link_email_to_telegram_account(self):
+        user = User.objects.create(username="tg_991001", email="")
+        user.set_unusable_password()
+        user.save(update_fields=["password"])
+
+        ChatUserProfile.objects.create(
+            user_id=user.id,
+            telegram_id=991001,
+            telegram_username="tg_only_user",
+            username="tg_only_user",
+            auth_provider="telegram",
+        )
+        AuthIdentity.objects.create(user=user, provider="telegram", provider_user_id="991001")
+
+        headers = {
+            "HTTP_X_AUTH_USER_ID": str(user.id),
+            "HTTP_X_AUTH_USERNAME": "tg_only_user",
+            "HTTP_X_AUTH_TELEGRAM_ID": "991001",
+            "HTTP_X_AUTH_TELEGRAM_USERNAME": "tg_only_user",
+            "HTTP_X_AUTH_PROVIDER": "telegram",
+            "HTTP_X_TELEGRAM_USER_ID": str(user.id),
+            "HTTP_X_TELEGRAM_USERNAME": "tg_only_user",
+        }
+
+        response = self.client.post(
+            "/api/auth/link/email/",
+            data={"email": "linked.from.tg@example.com", "password": "secret123"},
+            content_type="application/json",
+            **headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["id"], user.id)
+        self.assertEqual(payload["email"], "linked.from.tg@example.com")
+        self.assertTrue(payload["has_email_auth"])
+        self.assertTrue(payload["has_telegram_auth"])
+        self.assertFalse(payload["can_link_email"])
+
+        user.refresh_from_db()
+        self.assertEqual(user.email, "linked.from.tg@example.com")
+        self.assertEqual(user.username, "linked.from.tg@example.com")
+        self.assertTrue(user.check_password("secret123"))
+        self.assertTrue(
+            AuthIdentity.objects.filter(
+                user_id=user.id,
+                provider="email",
+                provider_user_id="linked.from.tg@example.com",
+            ).exists()
+        )

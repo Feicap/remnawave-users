@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router'
 import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
 import type { ProfileSettingsPayload } from '../types/profile'
+import type { TelegramUser } from '../types/telegram'
 import { isAdminUser } from '../utils/admin'
 import {
   buildAuthHeaders,
@@ -16,6 +17,13 @@ import {
 
 const DEFAULT_AVATAR =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
+const TELEGRAM_BOT_NAME = import.meta.env.VITE_TELEGRAM_BOT_NAME
+
+declare global {
+  interface Window {
+    onTelegramProfileLink?: (user: TelegramUser) => void
+  }
+}
 
 function getDisplayName(user: AuthUser): string {
   return user.display_name || user.username || user.telegram_username || user.email || 'Пользователь'
@@ -47,6 +55,47 @@ async function parseApiError(response: Response, fallback: string): Promise<stri
   return payload?.error || fallback
 }
 
+function mergeUserWithProfilePayload(user: AuthUser, payload: ProfileSettingsPayload | AuthUser): AuthUser {
+  const nextTelegramId =
+    typeof payload.telegram_id === 'number'
+      ? payload.telegram_id
+      : payload.telegram_id === null
+        ? undefined
+        : user.telegram_id
+
+  return {
+    ...user,
+    display_name: payload.display_name ?? user.display_name,
+    username: payload.username ?? user.username,
+    photo: payload.photo ?? user.photo,
+    email: payload.email ?? user.email,
+    telegram_id: nextTelegramId,
+    telegram_username: payload.telegram_username ?? user.telegram_username,
+    auth_provider:
+      payload.auth_provider === 'telegram' || payload.auth_provider === 'email' ? payload.auth_provider : user.auth_provider,
+    has_email_auth: typeof payload.has_email_auth === 'boolean' ? payload.has_email_auth : user.has_email_auth,
+    has_telegram_auth: typeof payload.has_telegram_auth === 'boolean' ? payload.has_telegram_auth : user.has_telegram_auth,
+    can_link_email: typeof payload.can_link_email === 'boolean' ? payload.can_link_email : user.can_link_email,
+    can_link_telegram: typeof payload.can_link_telegram === 'boolean' ? payload.can_link_telegram : user.can_link_telegram,
+  }
+}
+
+function isSameUserSnapshot(current: AuthUser, next: AuthUser): boolean {
+  return (
+    current.display_name === next.display_name &&
+    current.username === next.username &&
+    current.photo === next.photo &&
+    current.email === next.email &&
+    current.telegram_id === next.telegram_id &&
+    current.telegram_username === next.telegram_username &&
+    current.auth_provider === next.auth_provider &&
+    current.has_email_auth === next.has_email_auth &&
+    current.has_telegram_auth === next.has_telegram_auth &&
+    current.can_link_email === next.can_link_email &&
+    current.can_link_telegram === next.can_link_telegram
+  )
+}
+
 export default function ProfileSettings() {
   const navigate = useNavigate()
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
@@ -58,6 +107,13 @@ export default function ProfileSettings() {
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
   const [profileNotice, setProfileNotice] = useState('')
+  const [linkEmail, setLinkEmail] = useState('')
+  const [linkEmailPassword, setLinkEmailPassword] = useState('')
+  const [linkEmailConfirmPassword, setLinkEmailConfirmPassword] = useState('')
+  const [isLinkingEmail, setIsLinkingEmail] = useState(false)
+  const [isLinkingTelegram, setIsLinkingTelegram] = useState(false)
+  const [linkError, setLinkError] = useState('')
+  const [linkNotice, setLinkNotice] = useState('')
 
   const canViewAdminPanel = Boolean(user && isAdminUser(user))
 
@@ -87,6 +143,12 @@ export default function ProfileSettings() {
 
       const payload = (await response.json()) as ProfileSettingsPayload
       setProfileDisplayName(payload.display_name || '')
+      const nextUser = mergeUserWithProfilePayload(user, payload)
+      if (!isSameUserSnapshot(user, nextUser)) {
+        storeAuthUser(nextUser)
+        setUser(nextUser)
+      }
+      setLinkEmail(payload.email || '')
       setProfileError('')
     } catch {
       setProfileError('Сетевая ошибка при загрузке настроек профиля')
@@ -108,6 +170,85 @@ export default function ProfileSettings() {
     })
   }, [loadProfileSettings])
 
+  useEffect(() => {
+    if (!user) {
+      return
+    }
+
+    const canLinkTelegramForSession =
+      user.auth_provider === 'email' && (user.can_link_telegram ?? !(user.has_telegram_auth ?? Boolean(user.telegram_id)))
+    if (!canLinkTelegramForSession) {
+      return
+    }
+
+    window.onTelegramProfileLink = async (telegramUser: TelegramUser) => {
+      setIsLinkingTelegram(true)
+      setLinkError('')
+      setLinkNotice('')
+
+      try {
+        const response = await fetch('/api/auth/link/telegram/', {
+          method: 'POST',
+          headers: {
+            ...buildAuthHeaders(user),
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(telegramUser),
+        })
+
+        if (response.status === 401 || response.status === 403) {
+          handleUnauthorized()
+          return
+        }
+        if (!response.ok) {
+          setLinkError(await parseApiError(response, 'Не удалось привязать Telegram'))
+          return
+        }
+
+        const payload = (await response.json()) as AuthUser
+        const nextUser = mergeUserWithProfilePayload(user, payload)
+        storeAuthUser(nextUser)
+        setUser(nextUser)
+        setLinkNotice('Telegram успешно привязан')
+      } catch {
+        setLinkError('Сетевая ошибка при привязке Telegram')
+      } finally {
+        setIsLinkingTelegram(false)
+      }
+    }
+
+    const container = document.getElementById('telegram-link-widget')
+    if (!container) {
+      return () => {
+        delete window.onTelegramProfileLink
+      }
+    }
+
+    container.innerHTML = ''
+    if (!TELEGRAM_BOT_NAME) {
+      return () => {
+        container.innerHTML = ''
+        delete window.onTelegramProfileLink
+      }
+    }
+
+    const script = document.createElement('script')
+    script.src = 'https://telegram.org/js/telegram-widget.js?22'
+    script.async = true
+    script.setAttribute('data-telegram-login', TELEGRAM_BOT_NAME)
+    script.setAttribute('data-size', 'large')
+    script.setAttribute('data-radius', '0')
+    script.setAttribute('data-userpic', 'true')
+    script.setAttribute('data-request-access', 'write')
+    script.setAttribute('data-onauth', 'onTelegramProfileLink(user)')
+    container.appendChild(script)
+
+    return () => {
+      container.innerHTML = ''
+      delete window.onTelegramProfileLink
+    }
+  }, [handleUnauthorized, user])
+
   if (!user) {
     return <div>Загрузка...</div>
   }
@@ -115,6 +256,13 @@ export default function ProfileSettings() {
   const displayName = getDisplayName(user)
   const telegramId = getTelegramId(user)
   const avatarUrl = getAvatarUrl(user.photo)
+  const hasEmailAuth = user.has_email_auth ?? Boolean(user.email)
+  const hasTelegramAuth = user.has_telegram_auth ?? telegramId !== null
+  const canLinkEmail = user.can_link_email ?? !hasEmailAuth
+  const canLinkTelegram = user.can_link_telegram ?? !hasTelegramAuth
+  const showTelegramLinkSection = user.auth_provider === 'email' && canLinkTelegram
+  const showEmailLinkSection = user.auth_provider === 'telegram' && canLinkEmail
+  const allAuthMethodsLinked = hasEmailAuth && hasTelegramAuth
 
   async function handleSaveProfileSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -157,19 +305,11 @@ export default function ProfileSettings() {
         bumpStoredAvatarVersion()
       }
 
-      const nextUser: AuthUser = {
-        ...user,
-        display_name: payload.display_name,
-        username: payload.username,
-        photo: payload.photo,
-        email: payload.email || user.email,
-        telegram_id: typeof payload.telegram_id === 'number' ? payload.telegram_id : user.telegram_id,
-        telegram_username: payload.telegram_username || user.telegram_username,
-        auth_provider: payload.auth_provider === 'telegram' ? 'telegram' : 'email',
-      }
+      const nextUser = mergeUserWithProfilePayload(user, payload)
       storeAuthUser(nextUser)
       setUser(nextUser)
       setProfileDisplayName(payload.display_name || '')
+      setLinkEmail(payload.email || nextUser.email || '')
 
       setAvatarFile(null)
       setRemoveAvatar(false)
@@ -200,6 +340,58 @@ export default function ProfileSettings() {
 
   function handleChatClick() {
     navigate('/chat')
+  }
+
+  async function handleLinkEmailSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!user) {
+      return
+    }
+
+    const normalizedEmail = linkEmail.trim().toLowerCase()
+    if (!normalizedEmail || !linkEmailPassword) {
+      setLinkError('Введите email и пароль')
+      return
+    }
+    if (linkEmailPassword !== linkEmailConfirmPassword) {
+      setLinkError('Пароли не совпадают')
+      return
+    }
+
+    setIsLinkingEmail(true)
+    setLinkError('')
+    setLinkNotice('')
+    try {
+      const response = await fetch('/api/auth/link/email/', {
+        method: 'POST',
+        headers: {
+          ...buildAuthHeaders(user),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: normalizedEmail, password: linkEmailPassword }),
+      })
+      if (response.status === 401 || response.status === 403) {
+        handleUnauthorized()
+        return
+      }
+      if (!response.ok) {
+        setLinkError(await parseApiError(response, 'Не удалось привязать email'))
+        return
+      }
+
+      const payload = (await response.json()) as AuthUser
+      const nextUser = mergeUserWithProfilePayload(user, payload)
+      storeAuthUser(nextUser)
+      setUser(nextUser)
+      setLinkEmail(nextUser.email || normalizedEmail)
+      setLinkEmailPassword('')
+      setLinkEmailConfirmPassword('')
+      setLinkNotice('Email успешно привязан')
+    } catch {
+      setLinkError('Сетевая ошибка при привязке email')
+    } finally {
+      setIsLinkingEmail(false)
+    }
   }
 
   return (
@@ -377,6 +569,88 @@ export default function ProfileSettings() {
                 </button>
               </div>
             </form>
+
+            {showTelegramLinkSection ? (
+              <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-[#324467] dark:bg-[#0f1728]">
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Привязка Telegram</h3>
+                <p className="mt-1 text-sm text-gray-600 dark:text-[#92a4c9]">
+                  Войдите через Telegram, чтобы привязать Telegram-аккаунт к текущему email-профилю.
+                </p>
+                <div
+                  id="telegram-link-widget"
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                    minHeight: '56px',
+                    marginTop: '12px',
+                  }}
+                />
+                {!TELEGRAM_BOT_NAME ? (
+                  <p className="mt-2 text-sm text-gray-500 dark:text-[#92a4c9]">
+                    Telegram-вход скрыт, потому что не настроен `VITE_TELEGRAM_BOT_NAME`.
+                  </p>
+                ) : null}
+                {isLinkingTelegram ? <p className="mt-2 text-sm text-gray-500 dark:text-[#92a4c9]">Привязываем Telegram...</p> : null}
+              </div>
+            ) : null}
+
+            {showEmailLinkSection ? (
+              <form className="mt-6 grid grid-cols-1 gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-[#324467] dark:bg-[#0f1728]" onSubmit={handleLinkEmailSubmit}>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Привязка Email</h3>
+                <p className="text-sm text-gray-600 dark:text-[#92a4c9]">
+                  Зарегистрируйте email и пароль, чтобы привязать email-вход к текущему Telegram-профилю.
+                </p>
+
+                <label className="flex flex-col gap-1">
+                  <span className="text-sm text-gray-700 dark:text-white">Email</span>
+                  <input
+                    className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
+                    onChange={(event) => setLinkEmail(event.target.value)}
+                    placeholder="name@example.com"
+                    type="email"
+                    value={linkEmail}
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1">
+                  <span className="text-sm text-gray-700 dark:text-white">Пароль</span>
+                  <input
+                    className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
+                    onChange={(event) => setLinkEmailPassword(event.target.value)}
+                    placeholder="Минимум 6 символов"
+                    type="password"
+                    value={linkEmailPassword}
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1">
+                  <span className="text-sm text-gray-700 dark:text-white">Подтверждение пароля</span>
+                  <input
+                    className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:border-primary dark:border-[#324467] dark:bg-[#0d1525] dark:text-white"
+                    onChange={(event) => setLinkEmailConfirmPassword(event.target.value)}
+                    placeholder="Повторите пароль"
+                    type="password"
+                    value={linkEmailConfirmPassword}
+                  />
+                </label>
+
+                <div>
+                  <button
+                    className="h-10 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={isLinkingEmail}
+                    type="submit"
+                  >
+                    {isLinkingEmail ? 'Привязка...' : 'Привязать email'}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {allAuthMethodsLinked ? (
+              <p className="mt-6 text-sm text-gray-600 dark:text-[#92a4c9]">Оба способа входа уже привязаны к одному аккаунту.</p>
+            ) : null}
+            {linkError ? <p className="mt-3 text-sm text-red-500">{linkError}</p> : null}
+            {linkNotice ? <p className="mt-3 text-sm text-green-600">{linkNotice}</p> : null}
           </section>
         </div>
       </main>
