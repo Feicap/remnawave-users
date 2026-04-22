@@ -32,6 +32,10 @@ CHAT_RATE_LIMIT_MAX_MESSAGES = max(1, int(os.getenv("CHAT_RATE_LIMIT_MAX_MESSAGE
 MAX_AVATAR_FILE_SIZE_BYTES = 5 * 1024 * 1024
 MAX_CHAT_DISPLAY_NAME_LENGTH = 64
 CHAT_DISPLAY_NAME_PATTERN = re.compile(r"^[\w .\-а-яА-ЯёЁ]{2,64}$")
+MIN_AVATAR_SCALE = 1.0
+MAX_AVATAR_SCALE = 3.0
+MIN_AVATAR_POSITION = 0
+MAX_AVATAR_POSITION = 100
 
 
 def _normalize_email(value: str) -> str:
@@ -267,6 +271,26 @@ def _parse_optional_int(value: str) -> int | None:
     return int(value.strip())
 
 
+def _parse_optional_float(value: object | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if parsed != parsed:  # NaN
+        return None
+    return parsed
+
+
+def _clamp_avatar_scale(value: float) -> float:
+    return max(MIN_AVATAR_SCALE, min(MAX_AVATAR_SCALE, value))
+
+
+def _clamp_avatar_position(value: int) -> int:
+    return max(MIN_AVATAR_POSITION, min(MAX_AVATAR_POSITION, value))
+
+
 def _normalize_optional_text(value: object | None) -> str | None:
     if value is None:
         return None
@@ -470,6 +494,20 @@ def _chat_profile_avatar_url(profile: ChatUserProfile | None) -> str:
     return profile.photo or ""
 
 
+def _serialize_avatar_presentation(profile: ChatUserProfile | None) -> dict[str, float | int]:
+    if profile is None:
+        return {
+            "avatar_scale": 1.0,
+            "avatar_position_x": 50,
+            "avatar_position_y": 50,
+        }
+    return {
+        "avatar_scale": float(profile.avatar_scale),
+        "avatar_position_x": int(profile.avatar_position_x),
+        "avatar_position_y": int(profile.avatar_position_y),
+    }
+
+
 def _serialize_admin_user(user: User, *, online_after: datetime) -> dict:
     normalized_email = _normalize_email(user.email or user.username or "")
     remnawave_user = _resolve_remnawave_user(email=normalized_email) if normalized_email else None
@@ -494,6 +532,7 @@ def _serialize_admin_user(user: User, *, online_after: datetime) -> dict:
         chat_telegram_id = chat_profile.telegram_id
         chat_auth_provider = chat_profile.auth_provider
         chat_photo = chat_profile.photo
+    avatar_presentation = _serialize_avatar_presentation(chat_profile)
 
     return {
         "id": user.id,
@@ -513,6 +552,9 @@ def _serialize_admin_user(user: User, *, online_after: datetime) -> dict:
         "chat_telegram_id": chat_telegram_id,
         "chat_auth_provider": chat_auth_provider,
         "chat_photo": chat_photo,
+        "avatar_scale": avatar_presentation["avatar_scale"],
+        "avatar_position_x": avatar_presentation["avatar_position_x"],
+        "avatar_position_y": avatar_presentation["avatar_position_y"],
     }
 
 
@@ -546,6 +588,9 @@ def _upsert_chat_profile(
     photo: str | None = None,
     auth_provider: str = "",
     display_name: str | None = None,
+    avatar_scale: float | None = None,
+    avatar_position_x: int | None = None,
+    avatar_position_y: int | None = None,
 ) -> ChatUserProfile:
     if user_id is None:
         raise ValueError("user_id is required")
@@ -570,6 +615,12 @@ def _upsert_chat_profile(
         _set_if_changed("photo", photo[:2048])
     if display_name is not None:
         _set_if_changed("display_name", display_name[:255])
+    if avatar_scale is not None:
+        _set_if_changed("avatar_scale", _clamp_avatar_scale(float(avatar_scale)))
+    if avatar_position_x is not None:
+        _set_if_changed("avatar_position_x", _clamp_avatar_position(int(avatar_position_x)))
+    if avatar_position_y is not None:
+        _set_if_changed("avatar_position_y", _clamp_avatar_position(int(avatar_position_y)))
 
     if update_fields:
         profile.save(update_fields=update_fields + ["updated_at"])
@@ -622,6 +673,9 @@ def _serialize_chat_user(profile: ChatUserProfile | dict, *, unread_count: int, 
         telegram_username = profile.telegram_username
         photo = _chat_profile_avatar_url(profile)
         auth_provider = profile.auth_provider
+        avatar_scale = float(profile.avatar_scale)
+        avatar_position_x = int(profile.avatar_position_x)
+        avatar_position_y = int(profile.avatar_position_y)
     else:
         user_id = int(profile.get("user_id", 0))
         username = str(profile.get("display_name", "") or profile.get("username", ""))
@@ -629,6 +683,9 @@ def _serialize_chat_user(profile: ChatUserProfile | dict, *, unread_count: int, 
         telegram_username = str(profile.get("telegram_username", ""))
         photo = str(profile.get("photo", ""))
         auth_provider = str(profile.get("auth_provider", ""))
+        avatar_scale = float(profile.get("avatar_scale", 1.0))
+        avatar_position_x = int(profile.get("avatar_position_x", 50))
+        avatar_position_y = int(profile.get("avatar_position_y", 50))
 
     return {
         "user_id": user_id,
@@ -637,6 +694,9 @@ def _serialize_chat_user(profile: ChatUserProfile | dict, *, unread_count: int, 
         "telegram_username": telegram_username,
         "photo": photo,
         "auth_provider": auth_provider,
+        "avatar_scale": avatar_scale,
+        "avatar_position_x": avatar_position_x,
+        "avatar_position_y": avatar_position_y,
         "unread_count": unread_count,
         "last_message_at": last_message_at.isoformat() if last_message_at else None,
     }
@@ -867,6 +927,7 @@ def _serialize_profile_settings(*, user_id: int, profile: ChatUserProfile, teleg
         email=email,
         telegram_username=profile.telegram_username,
     )
+    avatar_presentation = _serialize_avatar_presentation(profile)
     payload = {
         "id": user_id,
         "display_name": profile.display_name,
@@ -876,6 +937,9 @@ def _serialize_profile_settings(*, user_id: int, profile: ChatUserProfile, teleg
         "telegram_id": profile.telegram_id if profile.telegram_id is not None else telegram_id,
         "telegram_username": profile.telegram_username,
         "auth_provider": profile.auth_provider or "email",
+        "avatar_scale": avatar_presentation["avatar_scale"],
+        "avatar_position_x": avatar_presentation["avatar_position_x"],
+        "avatar_position_y": avatar_presentation["avatar_position_y"],
     }
     return _attach_binding_flags(payload, user_id=user_id)
 
@@ -889,6 +953,9 @@ def _apply_profile_to_auth_payload(payload: dict, profile: ChatUserProfile) -> d
     if profile.telegram_id is not None:
         payload["telegram_id"] = profile.telegram_id
     payload["display_name"] = profile.display_name
+    payload["avatar_scale"] = float(profile.avatar_scale)
+    payload["avatar_position_x"] = int(profile.avatar_position_x)
+    payload["avatar_position_y"] = int(profile.avatar_position_y)
     return _attach_binding_flags(payload, user_id=profile.user_id)
 
 
@@ -1368,6 +1435,9 @@ def profile_settings(request: HttpRequest) -> JsonResponse:
 
     display_name_raw = payload.get("display_name")
     remove_avatar_raw = payload.get("remove_avatar")
+    avatar_scale_raw = payload.get("avatar_scale")
+    avatar_position_x_raw = payload.get("avatar_position_x")
+    avatar_position_y_raw = payload.get("avatar_position_y")
     uploaded_avatar = request.FILES.get("avatar")
     remove_avatar = _parse_optional_bool(remove_avatar_raw)
 
@@ -1375,6 +1445,24 @@ def profile_settings(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "remove_avatar must be boolean"}, status=400)
     if uploaded_avatar is not None and remove_avatar:
         return JsonResponse({"error": "Cannot upload and remove avatar in one request"}, status=400)
+
+    normalized_avatar_scale = _parse_optional_float(avatar_scale_raw)
+    if avatar_scale_raw is not None and normalized_avatar_scale is None:
+        return JsonResponse({"error": "avatar_scale must be number"}, status=400)
+    if normalized_avatar_scale is not None:
+        normalized_avatar_scale = _clamp_avatar_scale(normalized_avatar_scale)
+
+    normalized_avatar_position_x = _parse_optional_any_int(avatar_position_x_raw)
+    if avatar_position_x_raw is not None and normalized_avatar_position_x is None:
+        return JsonResponse({"error": "avatar_position_x must be integer"}, status=400)
+    if normalized_avatar_position_x is not None:
+        normalized_avatar_position_x = _clamp_avatar_position(normalized_avatar_position_x)
+
+    normalized_avatar_position_y = _parse_optional_any_int(avatar_position_y_raw)
+    if avatar_position_y_raw is not None and normalized_avatar_position_y is None:
+        return JsonResponse({"error": "avatar_position_y must be integer"}, status=400)
+    if normalized_avatar_position_y is not None:
+        normalized_avatar_position_y = _clamp_avatar_position(normalized_avatar_position_y)
 
     update_fields: list[str] = []
     if display_name_raw is not None:
@@ -1399,6 +1487,16 @@ def profile_settings(request: HttpRequest) -> JsonResponse:
             profile.avatar_file.delete(save=False)
         profile.avatar_file = None
         update_fields.append("avatar_file")
+
+    if normalized_avatar_scale is not None and float(profile.avatar_scale) != float(normalized_avatar_scale):
+        profile.avatar_scale = normalized_avatar_scale
+        update_fields.append("avatar_scale")
+    if normalized_avatar_position_x is not None and int(profile.avatar_position_x) != int(normalized_avatar_position_x):
+        profile.avatar_position_x = normalized_avatar_position_x
+        update_fields.append("avatar_position_x")
+    if normalized_avatar_position_y is not None and int(profile.avatar_position_y) != int(normalized_avatar_position_y):
+        profile.avatar_position_y = normalized_avatar_position_y
+        update_fields.append("avatar_position_y")
 
     if update_fields:
         profile.save(update_fields=list(dict.fromkeys(update_fields + ["updated_at"])))

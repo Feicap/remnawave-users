@@ -6,6 +6,7 @@ import type { AuthUser } from '../types/auth'
 import type { PaymentProof } from '../types/payment'
 import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser, withStoredAvatarVersion } from '../utils/auth'
 import { isAdminUser } from '../utils/admin'
+import { getAvatarImageStyle } from '../utils/avatar'
 
 const DEFAULT_AVATAR =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
@@ -54,6 +55,7 @@ export default function ProfilePay() {
   const telegramId = typeof user?.telegram_id === 'number' && Number.isFinite(user.telegram_id) ? user.telegram_id : null
   const avatarUrl = getAvatarUrl(user?.photo)
   const displayName = user ? getDisplayName(user) : 'User'
+  const avatarImageStyle = getAvatarImageStyle(user ?? undefined)
 
   const loadMyProofs = useCallback(async () => {
     if (!user) {
@@ -230,6 +232,7 @@ export default function ProfilePay() {
                   className="size-10 rounded-full object-cover object-center"
                   onError={handleAvatarError}
                   src={avatarUrl}
+                  style={avatarImageStyle}
                 />
               </div>
               <div className="flex flex-col">

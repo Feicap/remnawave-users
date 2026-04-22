@@ -5,6 +5,7 @@ import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
 import { isAdminUser } from '../utils/admin'
 import { clearStoredAuth, getStoredUser, refreshStoredAuthUser, withStoredAvatarVersion } from '../utils/auth'
+import { getAvatarImageStyle } from '../utils/avatar'
 
 const DEFAULT_AVATAR =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
@@ -101,6 +102,7 @@ export default function Profile() {
   const displayName = getDisplayName(user)
   const telegramId = getTelegramId(user)
   const avatarUrl = getAvatarUrl(user.photo)
+  const avatarImageStyle = getAvatarImageStyle(user)
 
   return (
     <div className="flex min-h-screen flex-col md:h-screen md:flex-row">
@@ -119,6 +121,7 @@ export default function Profile() {
                     className="size-10 rounded-full object-cover object-center"
                     onError={handleAvatarError}
                     src={avatarUrl}
+                    style={avatarImageStyle}
                   />
                 </div>
                 <div className="flex flex-col">

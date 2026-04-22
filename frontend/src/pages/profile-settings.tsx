@@ -14,6 +14,7 @@ import {
   storeAuthUser,
   withStoredAvatarVersion,
 } from '../utils/auth'
+import { getAvatarImageStyle, normalizeAvatarPresentation } from '../utils/avatar'
 
 const DEFAULT_AVATAR =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
@@ -71,6 +72,9 @@ function mergeUserWithProfilePayload(user: AuthUser, payload: ProfileSettingsPay
     email: payload.email ?? user.email,
     telegram_id: nextTelegramId,
     telegram_username: payload.telegram_username ?? user.telegram_username,
+    avatar_scale: typeof payload.avatar_scale === 'number' ? payload.avatar_scale : user.avatar_scale,
+    avatar_position_x: typeof payload.avatar_position_x === 'number' ? payload.avatar_position_x : user.avatar_position_x,
+    avatar_position_y: typeof payload.avatar_position_y === 'number' ? payload.avatar_position_y : user.avatar_position_y,
     auth_provider:
       payload.auth_provider === 'telegram' || payload.auth_provider === 'email' ? payload.auth_provider : user.auth_provider,
     has_email_auth: typeof payload.has_email_auth === 'boolean' ? payload.has_email_auth : user.has_email_auth,
@@ -88,6 +92,9 @@ function isSameUserSnapshot(current: AuthUser, next: AuthUser): boolean {
     current.email === next.email &&
     current.telegram_id === next.telegram_id &&
     current.telegram_username === next.telegram_username &&
+    current.avatar_scale === next.avatar_scale &&
+    current.avatar_position_x === next.avatar_position_x &&
+    current.avatar_position_y === next.avatar_position_y &&
     current.auth_provider === next.auth_provider &&
     current.has_email_auth === next.has_email_auth &&
     current.has_telegram_auth === next.has_telegram_auth &&
@@ -103,6 +110,10 @@ export default function ProfileSettings() {
   const [profileDisplayName, setProfileDisplayName] = useState('')
   const [avatarFile, setAvatarFile] = useState<File | null>(null)
   const [removeAvatar, setRemoveAvatar] = useState(false)
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState('')
+  const [avatarScale, setAvatarScale] = useState(1)
+  const [avatarPositionX, setAvatarPositionX] = useState(50)
+  const [avatarPositionY, setAvatarPositionY] = useState(50)
   const [isLoadingSettings, setIsLoadingSettings] = useState(true)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [profileError, setProfileError] = useState('')
@@ -142,8 +153,12 @@ export default function ProfileSettings() {
       }
 
       const payload = (await response.json()) as ProfileSettingsPayload
-      setProfileDisplayName(payload.display_name || '')
+      setProfileDisplayName(payload.display_name || payload.username || '')
       const nextUser = mergeUserWithProfilePayload(user, payload)
+      const avatarPresentation = normalizeAvatarPresentation(payload)
+      setAvatarScale(avatarPresentation.avatar_scale)
+      setAvatarPositionX(avatarPresentation.avatar_position_x)
+      setAvatarPositionY(avatarPresentation.avatar_position_y)
       if (!isSameUserSnapshot(user, nextUser)) {
         storeAuthUser(nextUser)
         setUser(nextUser)
@@ -169,6 +184,18 @@ export default function ProfileSettings() {
       setIsLoadingSettings(false)
     })
   }, [loadProfileSettings])
+
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreviewUrl('')
+      return
+    }
+    const nextObjectUrl = URL.createObjectURL(avatarFile)
+    setAvatarPreviewUrl(nextObjectUrl)
+    return () => {
+      URL.revokeObjectURL(nextObjectUrl)
+    }
+  }, [avatarFile])
 
   useEffect(() => {
     if (!user) {
@@ -263,6 +290,13 @@ export default function ProfileSettings() {
   const showTelegramLinkSection = user.auth_provider === 'email' && canLinkTelegram
   const showEmailLinkSection = user.auth_provider === 'telegram' && canLinkEmail
   const allAuthMethodsLinked = hasEmailAuth && hasTelegramAuth
+  const draftDisplayName = profileDisplayName.trim() || displayName
+  const draftAvatarUrl = removeAvatar ? DEFAULT_AVATAR : avatarPreviewUrl || avatarUrl || DEFAULT_AVATAR
+  const draftAvatarStyle = getAvatarImageStyle({
+    avatar_scale: avatarScale,
+    avatar_position_x: avatarPositionX,
+    avatar_position_y: avatarPositionY,
+  })
 
   async function handleSaveProfileSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -273,6 +307,9 @@ export default function ProfileSettings() {
     const normalizedDisplayName = profileDisplayName.trim()
     const formData = new FormData()
     formData.append('display_name', normalizedDisplayName)
+    formData.append('avatar_scale', String(avatarScale))
+    formData.append('avatar_position_x', String(Math.round(avatarPositionX)))
+    formData.append('avatar_position_y', String(Math.round(avatarPositionY)))
     if (avatarFile) {
       formData.append('avatar', avatarFile)
     }
@@ -304,11 +341,15 @@ export default function ProfileSettings() {
       if (avatarUpdated) {
         bumpStoredAvatarVersion()
       }
+      const avatarPresentation = normalizeAvatarPresentation(payload)
+      setAvatarScale(avatarPresentation.avatar_scale)
+      setAvatarPositionX(avatarPresentation.avatar_position_x)
+      setAvatarPositionY(avatarPresentation.avatar_position_y)
 
       const nextUser = mergeUserWithProfilePayload(user, payload)
       storeAuthUser(nextUser)
       setUser(nextUser)
-      setProfileDisplayName(payload.display_name || '')
+      setProfileDisplayName(payload.display_name || payload.username || '')
       setLinkEmail(payload.email || nextUser.email || '')
 
       setAvatarFile(null)
@@ -407,14 +448,15 @@ export default function ProfileSettings() {
               <div className="flex items-center gap-3 px-3 py-2">
                 <div className="size-10 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
                   <img
-                    alt={displayName}
+                    alt={draftDisplayName}
                     className="size-10 rounded-full object-cover object-center"
                     onError={handleAvatarError}
-                    src={avatarUrl}
+                    src={draftAvatarUrl}
+                    style={draftAvatarStyle}
                   />
                 </div>
                 <div className="flex flex-col">
-                  <h1 className="text-base font-medium leading-normal text-gray-900 dark:text-white">{displayName}</h1>
+                  <h1 className="text-base font-medium leading-normal text-gray-900 dark:text-white">{draftDisplayName}</h1>
                   {user.email ? (
                     <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">{user.email}</p>
                   ) : null}
@@ -502,10 +544,11 @@ export default function ProfileSettings() {
               <div className="md:col-span-2 flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-[#324467] dark:bg-[#0f1728]">
                 <div className="size-12 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
                   <img
-                    alt={displayName}
+                    alt={draftDisplayName}
                     className="size-12 rounded-full object-cover object-center"
                     onError={handleAvatarError}
-                    src={avatarUrl}
+                    src={draftAvatarUrl}
+                    style={draftAvatarStyle}
                   />
                 </div>
                 <div className="text-sm text-gray-600 dark:text-[#92a4c9]">
@@ -538,6 +581,82 @@ export default function ProfileSettings() {
                   type="file"
                 />
               </label>
+
+              <div className="md:col-span-2 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-[#324467] dark:bg-[#0f1728]">
+                <p className="text-sm font-medium text-gray-700 dark:text-white">Предпросмотр профиля</p>
+                <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-center">
+                  <div className="mx-auto size-24 shrink-0 overflow-hidden rounded-full border border-gray-200 bg-white dark:border-[#324467] dark:bg-[#111722] md:mx-0">
+                    <img
+                      alt={draftDisplayName}
+                      className="size-24 rounded-full object-cover object-center"
+                      onError={handleAvatarError}
+                      src={draftAvatarUrl}
+                      style={draftAvatarStyle}
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-base font-semibold text-gray-900 dark:text-white">{draftDisplayName}</p>
+                    <p className="text-xs text-gray-500 dark:text-[#92a4c9]">
+                      Так ник и аватар будут выглядеть в профиле и в шапке.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-600 dark:text-[#92a4c9]">Масштаб: {avatarScale.toFixed(2)}x</span>
+                    <input
+                      className="accent-primary"
+                      max={3}
+                      min={1}
+                      onChange={(event) => setAvatarScale(Number(event.target.value))}
+                      step={0.01}
+                      type="range"
+                      value={avatarScale}
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-600 dark:text-[#92a4c9]">Позиция X: {Math.round(avatarPositionX)}%</span>
+                    <input
+                      className="accent-primary"
+                      max={100}
+                      min={0}
+                      onChange={(event) => setAvatarPositionX(Number(event.target.value))}
+                      step={1}
+                      type="range"
+                      value={avatarPositionX}
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-gray-600 dark:text-[#92a4c9]">Позиция Y: {Math.round(avatarPositionY)}%</span>
+                    <input
+                      className="accent-primary"
+                      max={100}
+                      min={0}
+                      onChange={(event) => setAvatarPositionY(Number(event.target.value))}
+                      step={1}
+                      type="range"
+                      value={avatarPositionY}
+                    />
+                  </label>
+                </div>
+
+                <div className="mt-3">
+                  <button
+                    className="h-9 rounded-lg border border-gray-300 px-3 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-[#324467] dark:text-white dark:hover:bg-[#1a2539]"
+                    onClick={() => {
+                      setAvatarScale(1)
+                      setAvatarPositionX(50)
+                      setAvatarPositionY(50)
+                    }}
+                    type="button"
+                  >
+                    Сбросить позицию и масштаб
+                  </button>
+                </div>
+              </div>
 
               <label className="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-[#92a4c9] md:col-span-2">
                 <input

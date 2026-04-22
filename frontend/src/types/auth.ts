@@ -9,6 +9,9 @@ export interface AuthUser {
   telegram_id?: number
   telegram_username?: string
   auth_provider?: 'email' | 'telegram'
+  avatar_scale?: number
+  avatar_position_x?: number
+  avatar_position_y?: number
   has_email_auth?: boolean
   has_telegram_auth?: boolean
   can_link_email?: boolean

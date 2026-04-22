@@ -5,6 +5,10 @@ import type { AuthUser } from '../types/auth'
 import type { PaymentProof, PaymentProofUser, PaymentStatus } from '../types/payment'
 import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser, withStoredAvatarVersion } from '../utils/auth'
 import { isAdminUser } from '../utils/admin'
+import { getAvatarImageStyle } from '../utils/avatar'
+
+const DEFAULT_AVATAR =
+  'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
 
 function statusBadge(status: PaymentStatus): { label: string; className: string } {
   if (status === 'approved') {
@@ -166,6 +170,8 @@ export default function AdminCheck() {
   }
 
   const telegramId = getTelegramId(user)
+  const avatarUrl = withStoredAvatarVersion(user.photo) || DEFAULT_AVATAR
+  const avatarImageStyle = getAvatarImageStyle(user)
 
   async function updateStatus(proofId: number, status: PaymentStatus) {
     if (!user) {
@@ -250,12 +256,9 @@ export default function AdminCheck() {
           </div>
           <div className="flex flex-col gap-4">
             <div className="flex items-center gap-3 px-3 py-2">
-              <div
-                className="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10"
-                style={{
-                  backgroundImage: `url("${withStoredAvatarVersion(user.photo) || 'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfTQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'}")`,
-                }}
-              />
+              <div className="size-10 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
+                <img alt={getDisplayName(user)} className="size-10 rounded-full object-cover object-center" src={avatarUrl} style={avatarImageStyle} />
+              </div>
               <div className="flex flex-col">
                 <h1 className="text-gray-900 dark:text-white text-base font-medium leading-normal">
                   {getDisplayName(user)}

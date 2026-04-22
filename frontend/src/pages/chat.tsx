@@ -7,6 +7,7 @@ import type { AuthUser } from '../types/auth'
 import type { ChatMessageItem, ChatMessagesResponse, ChatScope, ChatUserItem } from '../types/chat'
 import { isAdminUser } from '../utils/admin'
 import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser, withStoredAvatarVersion } from '../utils/auth'
+import { getAvatarImageStyle } from '../utils/avatar'
 
 const DEFAULT_AVATAR =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
@@ -409,6 +410,7 @@ export default function Chat() {
   const avatarUrl = getAvatarUrl(user.photo)
   const displayName = getUserDisplayName(user)
   const telegramId = typeof user.telegram_id === 'number' ? user.telegram_id : null
+  const avatarImageStyle = getAvatarImageStyle(user)
 
   async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -560,6 +562,7 @@ export default function Chat() {
                     className="size-10 rounded-full object-cover object-center"
                     onError={handleAvatarError}
                     src={avatarUrl}
+                    style={avatarImageStyle}
                   />
                 </div>
                 <div className="flex flex-col">
@@ -772,6 +775,7 @@ export default function Chat() {
                     const isEditing = editingMessageId === message.id
                     const senderLabel = message.sender_username || `ID ${message.sender_id}`
                     const senderAvatarUrl = avatarByUserId.get(message.sender_id) ?? DEFAULT_AVATAR
+                    const senderAvatarStyle = message.sender_id === user.id ? avatarImageStyle : undefined
                     return (
                       <div className={isMine ? 'flex justify-end' : 'flex justify-start'} key={message.id}>
                         {!isMine ? (
@@ -781,6 +785,7 @@ export default function Chat() {
                               className="size-8 rounded-full object-cover object-center"
                               onError={handleAvatarError}
                               src={senderAvatarUrl}
+                              style={senderAvatarStyle}
                             />
                           </div>
                         ) : null}
@@ -872,6 +877,7 @@ export default function Chat() {
                               className="size-8 rounded-full object-cover object-center"
                               onError={handleAvatarError}
                               src={senderAvatarUrl}
+                              style={senderAvatarStyle}
                             />
                           </div>
                         ) : null}

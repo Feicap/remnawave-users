@@ -7,6 +7,7 @@ import type { AdminUserItem, AdminUsersMetrics, AdminUsersResponse, ApiError } f
 import type { ChatMessageItem, ChatScope } from '../types/chat'
 import { buildAuthHeaders, clearStoredAuth, getStoredUser, refreshStoredAuthUser, withStoredAvatarVersion } from '../utils/auth'
 import { isAdminUser } from '../utils/admin'
+import { getAvatarImageStyle } from '../utils/avatar'
 
 const REFRESH_INTERVAL_MS = 30_000
 const CHAT_REALTIME_DEBOUNCE_MS = 180
@@ -25,12 +26,18 @@ type AdminTab = 'users' | 'moderation'
 const env = import.meta.env as Record<string, string | undefined>
 const grafanaDomain = String(env.GRAFANA_DOMAIN ?? '').trim()
 const GRAFANA_URL = grafanaDomain ? `https://${grafanaDomain.replace(/\/+$/, '')}/dashboard/` : ''
+const DEFAULT_AVATAR =
+  'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
 
 function getTelegramId(user: AuthUser): number | null {
   if (typeof user.telegram_id === 'number' && Number.isFinite(user.telegram_id)) {
     return user.telegram_id
   }
   return null
+}
+
+function getDisplayName(user: AuthUser): string {
+  return user.display_name || user.username || user.telegram_username || user.email || 'Администратор'
 }
 
 function formatDateTime(value: string | null): string {
@@ -343,6 +350,9 @@ export default function Admin() {
   }
 
   const telegramId = getTelegramId(user)
+  const avatarUrl = withStoredAvatarVersion(user.photo) || DEFAULT_AVATAR
+  const avatarImageStyle = getAvatarImageStyle(user)
+  const displayName = getDisplayName(user)
 
   async function handleSaveCredentials() {
     if (!user || !selectedUser) {
@@ -460,15 +470,12 @@ export default function Admin() {
             </div>
             <div className="flex flex-col gap-4">
               <div className="flex items-center gap-3 px-3 py-2">
-                <div
-                  className="size-10 rounded-full bg-cover bg-center bg-no-repeat"
-                  style={{
-                    backgroundImage: `url("${withStoredAvatarVersion(user.photo) || 'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'}")`,
-                  }}
-                />
+                <div className="size-10 shrink-0 overflow-hidden rounded-full bg-gray-100 dark:bg-[#1a2539]">
+                  <img alt={displayName} className="size-10 rounded-full object-cover object-center" src={avatarUrl} style={avatarImageStyle} />
+                </div>
                 <div className="flex flex-col">
                   <h1 className="text-base font-medium leading-normal text-gray-900 dark:text-white">
-                    {user.username || 'Администратор'}
+                    {displayName}
                   </h1>
                   {user.email ? (
                     <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">{user.email}</p>
@@ -890,3 +897,4 @@ export default function Admin() {
     </div>
   )
 }
+
