@@ -1426,7 +1426,7 @@ def profile_settings(request: HttpRequest) -> JsonResponse:
     if request.method == "GET":
         return JsonResponse(_serialize_profile_settings(user_id=resolved_user_id, profile=profile, telegram_id=telegram_id))
 
-    if request.method != "PATCH":
+    if request.method not in {"PATCH", "POST"}:
         return JsonResponse({"error": "Invalid method"}, status=405)
 
     payload, parse_error = _parse_mutation_payload(request)

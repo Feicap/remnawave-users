@@ -1,5 +1,5 @@
-﻿import type { FormEvent, SyntheticEvent } from 'react'
-import { useCallback, useEffect, useState } from 'react'
+﻿import type { FormEvent, PointerEvent as ReactPointerEvent, SyntheticEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
@@ -19,6 +19,14 @@ import { getAvatarImageStyle, normalizeAvatarPresentation } from '../utils/avata
 const DEFAULT_AVATAR =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuD7QfEnuqRCntNYH9h2Vpo3jzR2BMfMqxHuHq-ivlguZcwzF_lfmadLZHf4vT8CfrKoIUNDPR1MmHqWK_suVK1pQOJXx0sSYBdAc3HCdZbWyuwNnuAj95xWWZilTRSMiKUfTt-6lFPSIvaV577Wik1oYO_ONDLJYuA5yaDJJSU7PwQfDQftZAILVh17O3KQr1s3dq56Z1g5mUvalbeTkomtJfUowYTnX-9km8Hdzb5Wm8IyfcVbawTAHqT3EkFdUrXJHLDkkTopp-E'
 const TELEGRAM_BOT_NAME = import.meta.env.VITE_TELEGRAM_BOT_NAME
+const MIN_AVATAR_SCALE = 1
+const MAX_AVATAR_SCALE = 3
+const MIN_AVATAR_POSITION = 0
+const MAX_AVATAR_POSITION = 100
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
 
 declare global {
   interface Window {
@@ -125,6 +133,12 @@ export default function ProfileSettings() {
   const [isLinkingTelegram, setIsLinkingTelegram] = useState(false)
   const [linkError, setLinkError] = useState('')
   const [linkNotice, setLinkNotice] = useState('')
+  const [isAvatarDragging, setIsAvatarDragging] = useState(false)
+  const avatarEditorRef = useRef<HTMLDivElement | null>(null)
+  const dragPointerIdRef = useRef<number | null>(null)
+  const dragStartRef = useRef<{ clientX: number; clientY: number; startPositionX: number; startPositionY: number } | null>(
+    null
+  )
 
   const canViewAdminPanel = Boolean(user && isAdminUser(user))
 
@@ -298,6 +312,81 @@ export default function ProfileSettings() {
     avatar_position_y: avatarPositionY,
   })
 
+  function stopAvatarDragging() {
+    dragPointerIdRef.current = null
+    dragStartRef.current = null
+    setIsAvatarDragging(false)
+  }
+
+  function handleAvatarEditorPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (removeAvatar) {
+      return
+    }
+    event.preventDefault()
+    dragPointerIdRef.current = event.pointerId
+    dragStartRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      startPositionX: avatarPositionX,
+      startPositionY: avatarPositionY,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setIsAvatarDragging(true)
+  }
+
+  function handleAvatarEditorPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (dragPointerIdRef.current !== event.pointerId || !dragStartRef.current) {
+      return
+    }
+    const editorElement = avatarEditorRef.current
+    if (!editorElement) {
+      return
+    }
+
+    const bounds = editorElement.getBoundingClientRect()
+    const editorSize = Math.max(1, Math.min(bounds.width, bounds.height))
+    const deltaX = event.clientX - dragStartRef.current.clientX
+    const deltaY = event.clientY - dragStartRef.current.clientY
+    const sensitivity = 100 / editorSize / Math.max(avatarScale, MIN_AVATAR_SCALE)
+
+    const nextPositionX = clamp(
+      dragStartRef.current.startPositionX - deltaX * sensitivity,
+      MIN_AVATAR_POSITION,
+      MAX_AVATAR_POSITION
+    )
+    const nextPositionY = clamp(
+      dragStartRef.current.startPositionY - deltaY * sensitivity,
+      MIN_AVATAR_POSITION,
+      MAX_AVATAR_POSITION
+    )
+
+    setAvatarPositionX(nextPositionX)
+    setAvatarPositionY(nextPositionY)
+  }
+
+  function handleAvatarEditorPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    if (dragPointerIdRef.current !== event.pointerId) {
+      return
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    stopAvatarDragging()
+  }
+
+  function handleAvatarEditorPointerCancel(event: ReactPointerEvent<HTMLDivElement>) {
+    if (dragPointerIdRef.current !== event.pointerId) {
+      return
+    }
+    stopAvatarDragging()
+  }
+
+  function resetAvatarPresentation() {
+    setAvatarScale(1)
+    setAvatarPositionX(50)
+    setAvatarPositionY(50)
+  }
+
   async function handleSaveProfileSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!user) {
@@ -323,7 +412,7 @@ export default function ProfileSettings() {
 
     try {
       const response = await fetch('/api/profile/settings/', {
-        method: 'PATCH',
+        method: 'POST',
         headers: buildAuthHeaders(user),
         body: formData,
       })
@@ -573,9 +662,11 @@ export default function ProfileSettings() {
                   accept=".jpg,.jpeg,.png,.webp,.bmp,.heic,.svg"
                   className="block w-full text-sm text-gray-700 dark:text-gray-300 file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-primary/90"
                   onChange={(event) => {
-                    setAvatarFile(event.target.files?.[0] ?? null)
-                    if (event.target.files?.[0]) {
+                    const selectedFile = event.target.files?.[0] ?? null
+                    setAvatarFile(selectedFile)
+                    if (selectedFile) {
                       setRemoveAvatar(false)
+                      resetAvatarPresentation()
                     }
                   }}
                   type="file"
@@ -602,59 +693,62 @@ export default function ProfileSettings() {
                   </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs text-gray-600 dark:text-[#92a4c9]">Масштаб: {avatarScale.toFixed(2)}x</span>
-                    <input
-                      className="accent-primary"
-                      max={3}
-                      min={1}
-                      onChange={(event) => setAvatarScale(Number(event.target.value))}
-                      step={0.01}
-                      type="range"
-                      value={avatarScale}
-                    />
-                  </label>
+                <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+                  <div className="mx-auto w-full max-w-[280px]">
+                    <div
+                      ref={avatarEditorRef}
+                      className={`relative aspect-square w-full overflow-hidden rounded-xl border border-gray-300 bg-[#0a1220] touch-none select-none dark:border-[#324467] ${
+                        isAvatarDragging ? 'cursor-grabbing' : 'cursor-grab'
+                      }`}
+                      onPointerCancel={handleAvatarEditorPointerCancel}
+                      onPointerDown={handleAvatarEditorPointerDown}
+                      onPointerMove={handleAvatarEditorPointerMove}
+                      onPointerUp={handleAvatarEditorPointerUp}
+                      role="presentation"
+                    >
+                      <img
+                        alt={draftDisplayName}
+                        className="absolute inset-0 size-full object-cover object-center"
+                        draggable={false}
+                        onError={handleAvatarError}
+                        src={draftAvatarUrl}
+                        style={draftAvatarStyle}
+                      />
+                      <div className="pointer-events-none absolute inset-0 rounded-full border-2 border-white/70" />
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_54%,rgba(6,10,18,0.55)_55%)]" />
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-[#92a4c9]">
+                      Перетащите изображение внутри рамки, чтобы выбрать центр аватара.
+                    </p>
+                  </div>
 
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs text-gray-600 dark:text-[#92a4c9]">Позиция X: {Math.round(avatarPositionX)}%</span>
-                    <input
-                      className="accent-primary"
-                      max={100}
-                      min={0}
-                      onChange={(event) => setAvatarPositionX(Number(event.target.value))}
-                      step={1}
-                      type="range"
-                      value={avatarPositionX}
-                    />
-                  </label>
+                  <div className="space-y-3">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs text-gray-600 dark:text-[#92a4c9]">Масштаб: {avatarScale.toFixed(2)}x</span>
+                      <input
+                        className="accent-primary"
+                        max={MAX_AVATAR_SCALE}
+                        min={MIN_AVATAR_SCALE}
+                        onChange={(event) => setAvatarScale(clamp(Number(event.target.value), MIN_AVATAR_SCALE, MAX_AVATAR_SCALE))}
+                        step={0.01}
+                        type="range"
+                        value={avatarScale}
+                      />
+                    </label>
 
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs text-gray-600 dark:text-[#92a4c9]">Позиция Y: {Math.round(avatarPositionY)}%</span>
-                    <input
-                      className="accent-primary"
-                      max={100}
-                      min={0}
-                      onChange={(event) => setAvatarPositionY(Number(event.target.value))}
-                      step={1}
-                      type="range"
-                      value={avatarPositionY}
-                    />
-                  </label>
-                </div>
+                    <div className="grid grid-cols-1 gap-2 text-xs text-gray-600 dark:text-[#92a4c9] sm:grid-cols-2">
+                      <p>Позиция X: {Math.round(avatarPositionX)}%</p>
+                      <p>Позиция Y: {Math.round(avatarPositionY)}%</p>
+                    </div>
 
-                <div className="mt-3">
-                  <button
-                    className="h-9 rounded-lg border border-gray-300 px-3 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-[#324467] dark:text-white dark:hover:bg-[#1a2539]"
-                    onClick={() => {
-                      setAvatarScale(1)
-                      setAvatarPositionX(50)
-                      setAvatarPositionY(50)
-                    }}
-                    type="button"
-                  >
-                    Сбросить позицию и масштаб
-                  </button>
+                    <button
+                      className="h-9 rounded-lg border border-gray-300 px-3 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-[#324467] dark:text-white dark:hover:bg-[#1a2539]"
+                      onClick={resetAvatarPresentation}
+                      type="button"
+                    >
+                      Сбросить позицию и масштаб
+                    </button>
+                  </div>
                 </div>
               </div>
 
