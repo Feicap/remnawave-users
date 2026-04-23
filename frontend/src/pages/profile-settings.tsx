@@ -50,20 +50,31 @@ function normalizeCropRect(rect: CropRect): CropRect {
 
 function cropRectFromAvatarPresentation(meta?: AvatarPresentation): CropRect {
   const normalized = normalizeAvatarPresentation(meta)
-  const size = clamp(100 / normalized.avatar_scale, MIN_CROP_SIZE_PERCENT, 100)
+  const scale = clamp(normalized.avatar_scale, MIN_AVATAR_SCALE, MAX_AVATAR_SCALE)
+  const size = clamp(100 / scale, MIN_CROP_SIZE_PERCENT, 100)
+  // getAvatarImageStyle uses object-position + transform(scale) around center.
+  // Effective visible center is shifted by scale from position delta.
+  const effectiveCenterX = 50 + (normalized.avatar_position_x - 50) * scale
+  const effectiveCenterY = 50 + (normalized.avatar_position_y - 50) * scale
   return normalizeCropRect({
-    x: normalized.avatar_position_x - size / 2,
-    y: normalized.avatar_position_y - size / 2,
+    x: effectiveCenterX - size / 2,
+    y: effectiveCenterY - size / 2,
     size,
   })
 }
 
 function avatarPresentationFromCropRect(rect: CropRect): Required<AvatarPresentation> {
   const normalizedRect = normalizeCropRect(rect)
+  const avatarScale = clamp(100 / normalizedRect.size, MIN_AVATAR_SCALE, MAX_AVATAR_SCALE)
+  const effectiveCenterX = normalizedRect.x + normalizedRect.size / 2
+  const effectiveCenterY = normalizedRect.y + normalizedRect.size / 2
+  const storedPositionX = 50 + (effectiveCenterX - 50) / avatarScale
+  const storedPositionY = 50 + (effectiveCenterY - 50) / avatarScale
+
   return {
-    avatar_scale: clamp(100 / normalizedRect.size, MIN_AVATAR_SCALE, MAX_AVATAR_SCALE),
-    avatar_position_x: clamp(normalizedRect.x + normalizedRect.size / 2, MIN_AVATAR_POSITION, MAX_AVATAR_POSITION),
-    avatar_position_y: clamp(normalizedRect.y + normalizedRect.size / 2, MIN_AVATAR_POSITION, MAX_AVATAR_POSITION),
+    avatar_scale: avatarScale,
+    avatar_position_x: clamp(storedPositionX, MIN_AVATAR_POSITION, MAX_AVATAR_POSITION),
+    avatar_position_y: clamp(storedPositionY, MIN_AVATAR_POSITION, MAX_AVATAR_POSITION),
   }
 }
 
