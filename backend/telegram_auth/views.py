@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import time
+from urllib.parse import unquote
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
@@ -449,9 +450,19 @@ def _parse_admin_ids() -> set[int]:
     return result
 
 
+def _decode_header_text(value: str | None) -> str:
+    normalized = (value or "").strip()
+    if not normalized.startswith("utf8:"):
+        return normalized
+    try:
+        return unquote(normalized[5:]).strip()
+    except Exception:
+        return ""
+
+
 def _extract_auth_user(request: HttpRequest) -> tuple[int | None, str]:
     header_user_id = request.headers.get("X-Telegram-User-Id", "").strip()
-    header_username = request.headers.get("X-Telegram-Username", "").strip()
+    header_username = _decode_header_text(request.headers.get("X-Telegram-Username"))
     if not header_user_id.isdigit():
         return None, header_username
     return int(header_user_id), header_username
@@ -461,12 +472,14 @@ def _extract_auth_identity(request: HttpRequest) -> tuple[int | None, str | None
     user_id = _parse_optional_int(request.headers.get("X-Auth-User-Id", "")) or _parse_optional_int(
         request.headers.get("X-Telegram-User-Id", "")
     )
-    email = _normalize_email(request.headers.get("X-Auth-Email", "")) or None
+    email = _normalize_email(_decode_header_text(request.headers.get("X-Auth-Email"))) or None
     telegram_id = _parse_optional_int(request.headers.get("X-Auth-Telegram-Id", ""))
-    username = request.headers.get("X-Auth-Username", "").strip() or request.headers.get("X-Telegram-Username", "").strip()
-    telegram_username = request.headers.get("X-Auth-Telegram-Username", "").strip()
-    photo = request.headers.get("X-Auth-Photo", "").strip()
-    auth_provider = request.headers.get("X-Auth-Provider", "").strip()
+    username = _decode_header_text(request.headers.get("X-Auth-Username")) or _decode_header_text(
+        request.headers.get("X-Telegram-Username")
+    )
+    telegram_username = _decode_header_text(request.headers.get("X-Auth-Telegram-Username"))
+    photo = _decode_header_text(request.headers.get("X-Auth-Photo"))
+    auth_provider = _decode_header_text(request.headers.get("X-Auth-Provider"))
     return user_id, email, telegram_id, username, telegram_username, photo, auth_provider
 
 

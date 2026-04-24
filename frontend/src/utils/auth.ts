@@ -40,6 +40,20 @@ export function clearStoredAuth(): void {
   localStorage.removeItem(AVATAR_VERSION_STORAGE_KEY)
 }
 
+function toHeaderValue(value: string | undefined): string {
+  const normalized = value?.trim() ?? ''
+  if (!normalized) {
+    return ''
+  }
+
+  for (let index = 0; index < normalized.length; index += 1) {
+    if (normalized.charCodeAt(index) > 255) {
+      return `utf8:${encodeURIComponent(normalized)}`
+    }
+  }
+  return normalized
+}
+
 export function buildAuthHeaders(
   user: Pick<AuthUser, 'id' | 'username' | 'email' | 'telegram_id' | 'telegram_username' | 'photo' | 'auth_provider'>,
 ): HeadersInit {
@@ -55,14 +69,14 @@ export function buildAuthHeaders(
   return {
     Authorization: `Bearer ${token}`,
     'X-Telegram-User-Id': String(user.id),
-    'X-Telegram-Username': user.username ?? '',
+    'X-Telegram-Username': toHeaderValue(user.username),
     'X-Auth-User-Id': String(user.id),
-    'X-Auth-Username': user.username ?? '',
-    'X-Auth-Email': fallbackEmail ?? '',
+    'X-Auth-Username': toHeaderValue(user.username),
+    'X-Auth-Email': toHeaderValue(fallbackEmail),
     'X-Auth-Telegram-Id': typeof fallbackTelegramId === 'number' ? String(fallbackTelegramId) : '',
-    'X-Auth-Telegram-Username': fallbackTelegramUsername ?? '',
-    'X-Auth-Photo': authPhoto,
-    'X-Auth-Provider': user.auth_provider ?? '',
+    'X-Auth-Telegram-Username': toHeaderValue(fallbackTelegramUsername),
+    'X-Auth-Photo': toHeaderValue(authPhoto),
+    'X-Auth-Provider': toHeaderValue(user.auth_provider),
   }
 }
 
