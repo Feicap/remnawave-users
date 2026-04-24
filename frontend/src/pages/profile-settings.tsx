@@ -223,8 +223,12 @@ export default function ProfileSettings() {
       }
       setLinkEmail(payload.email || '')
       setProfileError('')
-    } catch {
-      setProfileError('Сетевая ошибка при загрузке настроек профиля')
+    } catch (error) {
+      setProfileError(
+        error instanceof Error
+          ? `Сетевая ошибка при загрузке настроек профиля: ${error.message}`
+          : 'Сетевая ошибка при загрузке настроек профиля',
+      )
     } finally {
       setIsLoadingSettings(false)
     }
@@ -237,8 +241,8 @@ export default function ProfileSettings() {
   }, [navigate, user])
 
   useEffect(() => {
-    loadProfileSettings().catch(() => {
-      setProfileError('Не удалось загрузить настройки профиля')
+    loadProfileSettings().catch((error: unknown) => {
+      setProfileError(error instanceof Error ? `Не удалось загрузить настройки профиля: ${error.message}` : 'Не удалось загрузить настройки профиля')
       setIsLoadingSettings(false)
     })
   }, [loadProfileSettings])

@@ -45,13 +45,7 @@ function toHeaderValue(value: string | undefined): string {
   if (!normalized) {
     return ''
   }
-
-  for (let index = 0; index < normalized.length; index += 1) {
-    if (normalized.charCodeAt(index) > 255) {
-      return `utf8:${encodeURIComponent(normalized)}`
-    }
-  }
-  return normalized
+  return `utf8:${encodeURIComponent(normalized)}`
 }
 
 export function buildAuthHeaders(
