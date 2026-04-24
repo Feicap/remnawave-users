@@ -517,7 +517,7 @@ export default function ProfileSettings() {
 
     try {
       const response = await fetch('/api/profile/settings/', {
-        method: 'POST',
+        method: 'PATCH',
         headers: buildAuthHeaders(user),
         body: formData,
       })
@@ -546,8 +546,8 @@ export default function ProfileSettings() {
       setAvatarFile(null)
       setRemoveAvatar(false)
       setProfileNotice('Профиль обновлён')
-    } catch {
-      setProfileError('Сетевая ошибка при сохранении профиля')
+    } catch (error) {
+      setProfileError(error instanceof Error ? `Сетевая ошибка при сохранении профиля: ${error.message}` : 'Сетевая ошибка при сохранении профиля')
     } finally {
       setIsSavingProfile(false)
     }
@@ -837,7 +837,7 @@ export default function ProfileSettings() {
                       />
 
                       <div
-                        className="absolute border-2 border-white/90"
+                        className="absolute rounded-full border-2 border-white/90"
                         data-crop-handle="move"
                         style={{
                           left: cropLeft,
