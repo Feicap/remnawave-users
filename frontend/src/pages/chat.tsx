@@ -107,6 +107,7 @@ export default function Chat() {
   const refreshTimerRef = useRef<number | null>(null)
   const pendingUsersRefreshRef = useRef(false)
   const pendingMessagesRefreshRef = useRef(false)
+  const userRef = useRef<AuthUser | null>(user)
   const { totalUnread } = useChatUnreadPing(user)
 
   const selectedPeer = useMemo(
@@ -139,6 +140,10 @@ export default function Chat() {
     clearStoredAuth()
     navigate('/auth')
   }, [navigate])
+
+  useEffect(() => {
+    userRef.current = user
+  }, [user])
 
   const loadChatUsers = useCallback(async (showLoader: boolean = true) => {
     if (!user) {
@@ -308,13 +313,14 @@ export default function Chat() {
   useChatRealtime(user, true, handleRealtimeEvent)
 
   useEffect(() => {
-    if (!user) {
+    const currentUser = userRef.current
+    if (!currentUser) {
       navigate('/auth')
       return
     }
 
     let isCancelled = false
-    refreshStoredAuthUser(user)
+    refreshStoredAuthUser(currentUser)
       .then((nextUser) => {
         if (!isCancelled) {
           setUser(nextUser)

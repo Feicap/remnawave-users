@@ -294,6 +294,50 @@ class AuthIdentityBindingTests(TestCase):
         stale_profile.refresh_from_db()
         self.assertIsNone(stale_profile.telegram_id)
 
+    def test_auth_me_keeps_display_name_separate_from_username(self):
+        user = User.objects.create_user(username="nick-separate@example.com", email="nick-separate@example.com", password="secret123")
+        headers = _auth_headers(user.id, "nick-separate@example.com", "nick-separate@example.com")
+
+        profile_response = self.client.patch(
+            "/api/profile/settings/",
+            data={"display_name": "FreshNick"},
+            content_type="application/json",
+            **headers,
+        )
+        self.assertEqual(profile_response.status_code, 200)
+
+        auth_response = self.client.get("/api/auth/me/", **headers)
+        self.assertEqual(auth_response.status_code, 200)
+        payload = auth_response.json()
+        self.assertEqual(payload["display_name"], "FreshNick")
+        self.assertEqual(payload["username"], "nick-separate@example.com")
+
+    def test_remove_uploaded_avatar_does_not_keep_local_avatar_url_as_photo(self):
+        user = User.objects.create_user(username="avatar-clear@example.com", email="avatar-clear@example.com", password="secret123")
+        headers = _auth_headers(user.id, "avatar-clear@example.com", "avatar-clear@example.com")
+
+        avatar = SimpleUploadedFile("avatar.png", b"fakepngcontent", content_type="image/png")
+        upload_response = self.client.patch(
+            "/api/profile/settings/",
+            data={"display_name": "Avatar User", "avatar": avatar},
+            **headers,
+        )
+        self.assertEqual(upload_response.status_code, 200)
+        avatar_url = upload_response.json()["photo"]
+        self.assertEqual(avatar_url, f"/api/profile/avatar/{user.id}/")
+
+        remove_headers = {
+            **headers,
+            "HTTP_X_AUTH_PHOTO": f"utf8:{avatar_url}",
+        }
+        remove_response = self.client.patch(
+            "/api/profile/settings/",
+            data={"remove_avatar": "true"},
+            **remove_headers,
+        )
+        self.assertEqual(remove_response.status_code, 200)
+        self.assertEqual(remove_response.json()["photo"], "")
+
     @patch("telegram_auth.views._resolve_remnawave_user", return_value=None)
     @patch("telegram_auth.views.verify_telegram_auth", return_value=True)
     @patch("telegram_auth.views.has_telegram_config", return_value=True)

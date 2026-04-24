@@ -43,8 +43,13 @@ export default function AdminCheck() {
   const [imageUrls, setImageUrls] = useState<Record<number, string>>({})
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const imageBlobUrlsRef = useRef<string[]>([])
+  const userRef = useRef<AuthUser | null>(user)
 
   const isAdmin = useMemo(() => (user ? isAdminUser(user) : false), [user])
+
+  useEffect(() => {
+    userRef.current = user
+  }, [user])
 
   const loadUsers = useCallback(async () => {
     if (!user) {
@@ -74,16 +79,17 @@ export default function AdminCheck() {
   }, [user, selectedUserId])
 
   useEffect(() => {
-    if (!user) {
+    const currentUser = userRef.current
+    if (!currentUser) {
       navigate('/auth')
       return
     }
-    if (!isAdminUser(user)) {
+    if (!isAdminUser(currentUser)) {
       navigate('/profile')
       return
     }
 
-    refreshStoredAuthUser(user)
+    refreshStoredAuthUser(currentUser)
       .then((nextUser) => setUser(nextUser))
       .catch(() => {
         // Оставляем данные из localStorage, если сейчас не удалось обновить профиль.

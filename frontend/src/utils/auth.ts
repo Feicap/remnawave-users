@@ -49,23 +49,30 @@ function toHeaderValue(value: string | undefined): string {
 }
 
 export function buildAuthHeaders(
-  user: Pick<AuthUser, 'id' | 'username' | 'email' | 'telegram_id' | 'telegram_username' | 'photo' | 'auth_provider'>,
+  user: Pick<AuthUser, 'id' | 'display_name' | 'username' | 'email' | 'telegram_id' | 'telegram_username' | 'photo' | 'auth_provider'>,
 ): HeadersInit {
   const token = localStorage.getItem(TOKEN_STORAGE_KEY) ?? ''
   const normalizedPhoto = user.photo?.trim() ?? ''
   const authPhoto = normalizedPhoto.includes('/api/profile/avatar/') ? normalizedPhoto.split('?')[0] : normalizedPhoto
-  const fallbackEmail = user.email ?? (user.username?.includes('@') ? user.username : '')
+  const normalizedEmail = user.email?.trim() ?? ''
+  const normalizedUsername = user.username?.trim() ?? ''
+  const normalizedTelegramUsername = user.telegram_username?.trim() ?? ''
+  const fallbackEmail = normalizedEmail || (normalizedUsername.includes('@') ? normalizedUsername : '')
+  const hasDisplayName = Boolean(user.display_name?.trim())
   const fallbackTelegramId =
     typeof user.telegram_id === 'number' ? user.telegram_id : user.auth_provider === 'telegram' ? user.id : undefined
   const fallbackTelegramUsername =
-    user.telegram_username ?? (user.auth_provider === 'telegram' && !user.username?.includes('@') ? user.username : '')
+    normalizedTelegramUsername ||
+    (user.auth_provider === 'telegram' && !hasDisplayName && !normalizedUsername.includes('@') ? normalizedUsername : '')
+  const authUsername = user.auth_provider === 'email' ? fallbackEmail : fallbackTelegramUsername
 
   return {
     Authorization: `Bearer ${token}`,
     'X-Telegram-User-Id': String(user.id),
-    'X-Telegram-Username': toHeaderValue(user.username),
+    'X-Telegram-Username': toHeaderValue(authUsername),
     'X-Auth-User-Id': String(user.id),
-    'X-Auth-Username': toHeaderValue(user.username),
+    'X-Auth-Username': toHeaderValue(authUsername),
+    'X-Auth-Display-Name': toHeaderValue(user.display_name),
     'X-Auth-Email': toHeaderValue(fallbackEmail),
     'X-Auth-Telegram-Id': typeof fallbackTelegramId === 'number' ? String(fallbackTelegramId) : '',
     'X-Auth-Telegram-Username': toHeaderValue(fallbackTelegramUsername),

@@ -50,6 +50,7 @@ export default function ProfilePay() {
   const [imageUrls, setImageUrls] = useState<Record<number, string>>({})
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const imageBlobUrlsRef = useRef<string[]>([])
+  const userRef = useRef<AuthUser | null>(user)
 
   const canViewAdminPanel = useMemo(() => (user ? isAdminUser(user) : false), [user])
   const telegramId = typeof user?.telegram_id === 'number' && Number.isFinite(user.telegram_id) ? user.telegram_id : null
@@ -72,6 +73,10 @@ export default function ProfilePay() {
   }, [user])
 
   useEffect(() => {
+    userRef.current = user
+  }, [user])
+
+  useEffect(() => {
     if (!user) {
       navigate('/auth')
       return
@@ -88,10 +93,11 @@ export default function ProfilePay() {
   }, [navigate, user, loadMyProofs])
 
   useEffect(() => {
-    if (!user) {
+    const currentUser = userRef.current
+    if (!currentUser) {
       return
     }
-    refreshStoredAuthUser(user)
+    refreshStoredAuthUser(currentUser)
       .then((nextUser) => setUser(nextUser))
       .catch(() => {
         // Оставляем локальный профиль, если обновление временно недоступно.

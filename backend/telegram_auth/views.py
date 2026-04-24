@@ -574,6 +574,11 @@ def _chat_profile_avatar_url(profile: ChatUserProfile | None) -> str:
     return profile.photo or ""
 
 
+def _is_local_profile_avatar_url(value: str | None) -> bool:
+    normalized = (value or "").strip()
+    return normalized.startswith("/api/profile/avatar/") or "/api/profile/avatar/" in normalized
+
+
 def _serialize_avatar_presentation(profile: ChatUserProfile | None) -> dict[str, float | int]:
     if profile is None:
         return {
@@ -740,7 +745,7 @@ def _upsert_chat_profile(
         _set_if_changed("telegram_id", telegram_id)
     _set_if_changed("telegram_username", telegram_username[:255])
     _set_if_changed("auth_provider", auth_provider[:32])
-    if photo is not None:
+    if photo is not None and not _is_local_profile_avatar_url(photo):
         _set_if_changed("photo", photo[:2048])
     if display_name is not None:
         _set_if_changed("display_name", display_name[:255])
@@ -1080,18 +1085,12 @@ def _serialize_profile_settings(*, user_id: int, profile: ChatUserProfile, teleg
     django_user = User.objects.filter(id=user_id).only("username", "email").first()
     email = profile.email or (django_user.email if django_user else "")
     fallback_username = (django_user.username if django_user else "") or email
-    display_name = _resolve_chat_display_name(
-        user_id=user_id,
-        display_name=profile.display_name,
-        username=profile.username or fallback_username,
-        email=email,
-        telegram_username=profile.telegram_username,
-    )
+    username = profile.username or profile.telegram_username or fallback_username
     avatar_presentation = _serialize_avatar_presentation(profile)
     payload = {
         "id": user_id,
         "display_name": profile.display_name,
-        "username": display_name,
+        "username": username,
         "photo": _chat_profile_avatar_url(profile),
         "email": email,
         "telegram_id": profile.telegram_id if profile.telegram_id is not None else telegram_id,
@@ -1106,8 +1105,8 @@ def _serialize_profile_settings(*, user_id: int, profile: ChatUserProfile, teleg
 
 
 def _apply_profile_to_auth_payload(payload: dict, profile: ChatUserProfile) -> dict:
-    if profile.display_name:
-        payload["username"] = profile.display_name
+    if profile.username:
+        payload["username"] = profile.username
     avatar_url = _chat_profile_avatar_url(profile)
     if avatar_url:
         payload["photo"] = avatar_url
@@ -1648,6 +1647,9 @@ def profile_settings(request: HttpRequest) -> JsonResponse:
             profile.avatar_file.delete(save=False)
         profile.avatar_file = None
         update_fields.append("avatar_file")
+        if _is_local_profile_avatar_url(profile.photo):
+            profile.photo = ""
+            update_fields.append("photo")
 
     if normalized_avatar_scale is not None and float(profile.avatar_scale) != float(normalized_avatar_scale):
         profile.avatar_scale = normalized_avatar_scale
@@ -2725,6 +2727,9 @@ def admin_update_user_credentials(request: HttpRequest, target_user_id: int) -> 
             profile.avatar_file.delete(save=False)
         profile.avatar_file = None
         updated_profile_fields.append("avatar_file")
+        if _is_local_profile_avatar_url(profile.photo):
+            profile.photo = ""
+            updated_profile_fields.append("photo")
 
     if updated_user_fields:
         user.save(update_fields=list(dict.fromkeys(updated_user_fields)))

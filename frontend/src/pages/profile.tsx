@@ -1,5 +1,5 @@
 ﻿import type { SyntheticEvent } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import NotificationBell from '../components/NotificationBell'
 import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
@@ -40,6 +40,7 @@ export default function Profile() {
   const navigate = useNavigate()
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
   const [presenceNow, setPresenceNow] = useState(() => Date.now())
+  const userRef = useRef<AuthUser | null>(user)
   const { totalUnread } = useChatUnreadPing(user)
   const initialExpiry = new Date('2026-04-04T13:33:00')
   const now = new Date(presenceNow)
@@ -47,16 +48,21 @@ export default function Profile() {
   const renewPeriodMs = 30 * msInDay
 
   useEffect(() => {
-    if (!user) {
+    userRef.current = user
+  }, [user])
+
+  useEffect(() => {
+    const currentUser = userRef.current
+    if (!currentUser) {
       navigate('/auth')
       return
     }
+    const profileUser = currentUser
 
-    const currentUser = user
     let cancelled = false
     async function refreshProfile() {
       try {
-        const nextUser = await refreshStoredAuthUser(currentUser)
+        const nextUser = await refreshStoredAuthUser(profileUser)
         if (!cancelled) {
           setUser(nextUser)
         }

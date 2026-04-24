@@ -50,6 +50,13 @@ def _parse_optional_int(value: Any) -> int | None:
     return None
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _extract_cookie_map(raw_cookie: str) -> dict[str, str]:
     cookies: dict[str, str] = {}
     for chunk in raw_cookie.split(";"):
@@ -177,6 +184,7 @@ async def _fetch_remnawave_user(path: str, lookup_label: str, lookup_value: str 
     base_url = str(os.getenv("REMNAWAVE_BASE_URL", "")).rstrip("/")
     token = str(os.getenv("REMNAWAVE_TOKEN", "")).strip()
     raw_cookie = str(os.getenv("REMNAWAVE_COOKIE", "")).strip()
+    verify_ssl = _env_flag("REMNAWAVE_SSL_VERIFY", True)
 
     if not base_url or not token or not raw_cookie:
         logger.warning("REMNAWAVE_BASE_URL, REMNAWAVE_TOKEN, or REMNAWAVE_COOKIE not configured")
@@ -191,7 +199,7 @@ async def _fetch_remnawave_user(path: str, lookup_label: str, lookup_value: str 
     url = f"{base_url}{path}"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, cookies=cookies, ssl=False) as response:
+            async with session.get(url, headers=headers, cookies=cookies, ssl=verify_ssl) as response:
                 if response.status == 404:
                     logger.info("Remnawave user not found for %s=%s", lookup_label, lookup_value)
                     return None

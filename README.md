@@ -1,5 +1,10 @@
 ﻿# remnawave-users
 
+### Быстрый запуск инсталлятора
+```bash
+curl -fsSL https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts/install-blue-green-ubuntu.sh | bash
+```
+
 Монорепозиторий проекта:
 - `backend` - Django API (Telegram auth)
 - `frontend` - React + Vite
@@ -30,6 +35,7 @@ nano backend/.env
 - `REMNAWAVE_BASE_URL`
 - `REMNAWAVE_TOKEN`
 - `REMNAWAVE_COOKIE`
+- `REMNAWAVE_SSL_VERIFY=True` (`False` только для стендов с самоподписанным TLS)
 
 ### 2) Frontend env (`frontend/.env`)
 ```bash
@@ -40,7 +46,6 @@ nano frontend/.env
 Указать:
 - `VITE_TELEGRAM_BOT_NAME=<имя_бота>`
 - `VITE_API_URL=<домен>/api/`
-/api/
 
 ### 3) Docker prod env (`.env.prod`)
 ```bash
@@ -80,10 +85,7 @@ EOF
 
 ## Вариант 1: Docker Compose на Ubuntu VPS
 
-### Быстрый запуск blue-green инсталлятора
-```bash
-curl -fsSL https://raw.githubusercontent.com/Feicap/remnawave-users/main/scripts/install-blue-green-ubuntu.sh | bash
-```
+
 
 Инсталлятор автоматически устанавливает Grafana/Prometheus (kube-prometheus-stack).
 Если `kubectl` недоступен, он пытается установить `k3s` и продолжает установку мониторинга.
