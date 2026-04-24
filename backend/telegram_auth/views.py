@@ -709,6 +709,7 @@ def _serialize_chat_message(
     viewer_marker_at: datetime | None = None,
     peer_marker_at: datetime | None = None,
     include_original_deleted_body: bool = False,
+    user_display_names: dict[int, str] | None = None,
 ) -> dict:
     body = message.body
     if message.is_deleted and not include_original_deleted_body:
@@ -723,13 +724,20 @@ def _serialize_chat_message(
         delivered_to_recipient = peer_marker_at is not None
         read_by_recipient = bool(peer_marker_at and peer_marker_at >= message.created_at)
 
+    sender_username = message.sender_username
+    recipient_username = message.recipient_username
+    if user_display_names is not None:
+        sender_username = user_display_names.get(message.sender_id, sender_username)
+        if message.recipient_id is not None:
+            recipient_username = user_display_names.get(message.recipient_id, recipient_username)
+
     return {
         "id": message.id,
         "scope": message.scope,
         "sender_id": message.sender_id,
-        "sender_username": message.sender_username,
+        "sender_username": sender_username,
         "recipient_id": message.recipient_id,
-        "recipient_username": message.recipient_username,
+        "recipient_username": recipient_username,
         "body": body,
         "is_deleted": message.is_deleted,
         "edited_at": message.edited_at.isoformat() if message.edited_at else None,
@@ -738,6 +746,29 @@ def _serialize_chat_message(
         "delivered_to_recipient": delivered_to_recipient,
         "read_by_recipient": read_by_recipient,
         "created_at": message.created_at.isoformat(),
+    }
+
+
+def _resolve_chat_message_display_names(messages: list[ChatMessage]) -> dict[int, str]:
+    user_ids: set[int] = set()
+    for message in messages:
+        user_ids.add(message.sender_id)
+        if message.recipient_id is not None:
+            user_ids.add(message.recipient_id)
+
+    if not user_ids:
+        return {}
+
+    profiles = ChatUserProfile.objects.filter(user_id__in=user_ids)
+    return {
+        profile.user_id: _resolve_chat_display_name(
+            user_id=profile.user_id,
+            display_name=profile.display_name,
+            username=profile.username,
+            email=profile.email,
+            telegram_username=profile.telegram_username,
+        )
+        for profile in profiles
     }
 
 
@@ -1714,6 +1745,7 @@ def chat_messages(request: HttpRequest) -> JsonResponse:
         if scope == ChatMessage.SCOPE_GLOBAL:
             messages_query = _filter_messages_by_query_params(ChatMessage.objects.filter(scope=scope), request)
             messages, has_more, next_before_id = _paginate_chat_queryset(messages_query, limit=limit, before_id=before_id)
+            user_display_names = _resolve_chat_message_display_names(messages)
             _touch_chat_read_marker(user_id=user_id, scope=ChatMessage.SCOPE_GLOBAL)
             publish_chat_event(
                 {
@@ -1726,7 +1758,10 @@ def chat_messages(request: HttpRequest) -> JsonResponse:
             return JsonResponse(
                 {
                     "scope": scope,
-                    "items": [_serialize_chat_message(message, viewer_id=user_id) for message in messages],
+                    "items": [
+                        _serialize_chat_message(message, viewer_id=user_id, user_display_names=user_display_names)
+                        for message in messages
+                    ],
                     "pagination": {"has_more": has_more, "next_before_id": next_before_id, "limit": limit},
                 }
             )
@@ -1747,6 +1782,7 @@ def chat_messages(request: HttpRequest) -> JsonResponse:
         )
         messages_query = _filter_messages_by_query_params(messages_query, request)
         messages, has_more, next_before_id = _paginate_chat_queryset(messages_query, limit=limit, before_id=before_id)
+        user_display_names = _resolve_chat_message_display_names(messages)
         _touch_chat_read_marker(user_id=user_id, scope=ChatMessage.SCOPE_PRIVATE, peer_id=peer_id)
         publish_chat_event(
             {
@@ -1779,6 +1815,7 @@ def chat_messages(request: HttpRequest) -> JsonResponse:
                         viewer_id=user_id,
                         viewer_marker_at=viewer_marker.last_read_at if viewer_marker else None,
                         peer_marker_at=peer_marker.last_read_at if peer_marker else None,
+                        user_display_names=user_display_names,
                     )
                     for message in messages
                 ],
@@ -2108,10 +2145,18 @@ def admin_chat_messages(request: HttpRequest) -> JsonResponse:
             messages_query = messages_query.filter(Q(sender_id=filter_peer_id) | Q(recipient_id=filter_peer_id))
 
     messages, has_more, next_before_id = _paginate_chat_queryset(messages_query, limit=limit, before_id=before_id)
+    user_display_names = _resolve_chat_message_display_names(messages)
     return JsonResponse(
         {
             "scope": scope,
-            "items": [_serialize_chat_message(message, include_original_deleted_body=True) for message in messages],
+            "items": [
+                _serialize_chat_message(
+                    message,
+                    include_original_deleted_body=True,
+                    user_display_names=user_display_names,
+                )
+                for message in messages
+            ],
             "pagination": {"has_more": has_more, "next_before_id": next_before_id, "limit": limit},
         }
     )

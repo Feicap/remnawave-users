@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 
-from telegram_auth.models import AuthIdentity, ChatUserProfile
+from telegram_auth.models import AuthIdentity, ChatMessage, ChatUserProfile
 from telegram_auth import views
 
 
@@ -188,6 +188,37 @@ class ChatApiTests(TestCase):
         search_items = search_response.json()["items"]
         self.assertEqual(len(search_items), 1)
         self.assertEqual(search_items[0]["body"], "message 4")
+
+    def test_chat_messages_use_current_profile_display_name(self):
+        sender_headers = _auth_headers(515, "oldnick", "oldnick@example.com")
+        reader_headers = _auth_headers(616, "reader", "reader@example.com")
+
+        send_response = self.client.post(
+            "/api/chat/messages/",
+            data={"scope": "global", "body": "before rename"},
+            content_type="application/json",
+            **sender_headers,
+        )
+        self.assertEqual(send_response.status_code, 201)
+        self.assertEqual(send_response.json()["sender_username"], "oldnick")
+
+        profile_response = self.client.patch(
+            "/api/profile/settings/",
+            data={"display_name": "FreshNick"},
+            content_type="application/json",
+            **sender_headers,
+        )
+        self.assertEqual(profile_response.status_code, 200)
+        self.assertEqual(profile_response.json()["display_name"], "FreshNick")
+
+        stored_message = ChatMessage.objects.get(id=send_response.json()["id"])
+        self.assertEqual(stored_message.sender_username, "oldnick")
+
+        messages_response = self.client.get("/api/chat/messages/?scope=global", **reader_headers)
+        self.assertEqual(messages_response.status_code, 200)
+        items = messages_response.json()["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["sender_username"], "FreshNick")
 
 
 class AuthIdentityBindingTests(TestCase):
