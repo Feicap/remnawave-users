@@ -16,4 +16,7 @@ export interface AuthUser {
   has_telegram_auth?: boolean
   can_link_email?: boolean
   can_link_telegram?: boolean
+  is_online?: boolean
+  last_seen_at?: string | null
+  online_window_seconds?: number
 }

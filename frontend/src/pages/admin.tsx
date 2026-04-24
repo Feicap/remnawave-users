@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
+import NotificationBell from '../components/NotificationBell'
 import { useChatRealtime, type ChatRealtimeEvent } from '../hooks/useChatRealtime'
 import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
@@ -20,7 +21,7 @@ const DEFAULT_METRICS: AdminUsersMetrics = {
   users_without_password: 0,
   active_today: 0,
 }
-type UserFilter = 'all' | 'online' | 'remnawave' | 'need-password'
+type UserFilter = 'all' | 'online' | 'remnawave' | 'need-password' | 'payment-pending'
 type AdminTab = 'users' | 'moderation'
 
 const env = import.meta.env as Record<string, string | undefined>
@@ -100,6 +101,8 @@ export default function Admin() {
   const [notice, setNotice] = useState('')
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const [selectedUserDetails, setSelectedUserDetails] = useState<AdminUserItem | null>(null)
+  const [isLoadingUserDetails, setIsLoadingUserDetails] = useState(false)
   const [activeTab, setActiveTab] = useState<AdminTab>('users')
   const [chatMessages, setChatMessages] = useState<ChatMessageItem[]>([])
   const [chatScopeFilter, setChatScopeFilter] = useState<'all' | ChatScope>('all')
@@ -113,25 +116,7 @@ export default function Admin() {
     [selectedUserId, users],
   )
 
-  const filteredUsers = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase()
-    return users.filter((item) => {
-      if (filter === 'online' && !item.is_online) {
-        return false
-      }
-      if (filter === 'remnawave' && !item.has_remnawave_access) {
-        return false
-      }
-      if (filter === 'need-password' && item.has_password) {
-        return false
-      }
-      if (!normalizedSearch) {
-        return true
-      }
-      const target = `${item.id} ${item.login} ${item.email}`.toLowerCase()
-      return target.includes(normalizedSearch)
-    })
-  }, [filter, search, users])
+  const filteredUsers = users
 
   const loadUsers = useCallback(
     async (showLoader: boolean) => {
@@ -144,7 +129,15 @@ export default function Admin() {
       }
 
       try {
-        const response = await fetch('/api/admin/users/?limit=500', {
+        const query = new URLSearchParams({
+          limit: '500',
+          offset: '0',
+          filter,
+        })
+        if (search.trim()) {
+          query.set('q', search.trim())
+        }
+        const response = await fetch(`/api/admin/users/?${query.toString()}`, {
           headers: buildAuthHeaders(user),
         })
 
@@ -168,7 +161,29 @@ export default function Admin() {
         setIsLoading(false)
       }
     },
-    [navigate, user],
+    [filter, navigate, search, user],
+  )
+
+  const loadSelectedUserDetails = useCallback(
+    async (targetUserId: number) => {
+      if (!user) {
+        return
+      }
+      setIsLoadingUserDetails(true)
+      try {
+        const response = await fetch(`/api/admin/users/${targetUserId}/`, {
+          headers: buildAuthHeaders(user),
+        })
+        if (!response.ok) {
+          return
+        }
+        const payload = (await response.json()) as AdminUserItem
+        setSelectedUserDetails(payload)
+      } finally {
+        setIsLoadingUserDetails(false)
+      }
+    },
+    [user],
   )
 
   const loadAdminChat = useCallback(
@@ -338,12 +353,23 @@ export default function Admin() {
     if (!selectedUser) {
       setEditLogin('')
       setEditPassword('')
+      setSelectedUserDetails(null)
       return
     }
     setEditLogin(selectedUser.login)
     setEditPassword('')
     setNotice('')
   }, [selectedUser])
+
+  useEffect(() => {
+    if (!selectedUserId) {
+      setSelectedUserDetails(null)
+      return
+    }
+    loadSelectedUserDetails(selectedUserId).catch(() => {
+      // Детальная карточка не должна ломать основной список пользователей.
+    })
+  }, [loadSelectedUserDetails, selectedUserId])
 
   if (!user || !isAdminUser(user)) {
     return <div>Загрузка...</div>
@@ -555,6 +581,7 @@ export default function Admin() {
 
       <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-10">
         <div className="mx-auto flex max-w-7xl flex-col gap-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1 dark:border-[#324467] dark:bg-[#111722]">
             <button
               className={
@@ -578,6 +605,9 @@ export default function Admin() {
             >
               Модерация
             </button>
+          </div>
+
+            <NotificationBell user={user} />
           </div>
 
           {activeTab === 'users' ? (
@@ -650,6 +680,7 @@ export default function Admin() {
                       <option value="online">Только онлайн</option>
                       <option value="remnawave">С доступом Remnawave</option>
                       <option value="need-password">Без пароля</option>
+                      <option value="payment-pending">Есть оплаты на проверке</option>
                     </select>
                   </div>
 
@@ -774,6 +805,52 @@ export default function Admin() {
                       <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-[#0d1525] dark:text-[#92a4c9]">
                         <p>Дата регистрации: {formatDateTime(selectedUser.date_joined)}</p>
                         <p>Последний вход: {formatDateTime(selectedUser.last_login)}</p>
+                      </div>
+
+                      <div className="rounded-lg border border-gray-200 p-3 text-sm dark:border-[#324467]">
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="font-semibold text-gray-900 dark:text-white">Сводка пользователя</p>
+                          {isLoadingUserDetails ? <span className="text-xs text-gray-400">Обновление...</span> : null}
+                        </div>
+                        {selectedUserDetails?.details ? (
+                          <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-[#92a4c9]">
+                            <div className="rounded-md bg-gray-50 p-2 dark:bg-[#0d1525]">
+                              <p className="text-gray-500 dark:text-[#92a4c9]">Оплаты</p>
+                              <p className="text-base font-semibold text-gray-900 dark:text-white">
+                                {selectedUserDetails.details.payment_counts.total}
+                              </p>
+                              <p>ожидают: {selectedUserDetails.details.payment_counts.pending}</p>
+                            </div>
+                            <div className="rounded-md bg-gray-50 p-2 dark:bg-[#0d1525]">
+                              <p className="text-gray-500 dark:text-[#92a4c9]">Чат</p>
+                              <p className="text-base font-semibold text-gray-900 dark:text-white">
+                                {selectedUserDetails.details.chat_counts.total}
+                              </p>
+                              <p>личных: {selectedUserDetails.details.chat_counts.private}</p>
+                            </div>
+                            <div className="rounded-md bg-gray-50 p-2 dark:bg-[#0d1525]">
+                              <p className="text-gray-500 dark:text-[#92a4c9]">Идентичности</p>
+                              <p className="text-base font-semibold text-gray-900 dark:text-white">
+                                {selectedUserDetails.details.auth_identities.length}
+                              </p>
+                              <p>{selectedUserDetails.details.auth_identities.map((item) => item.provider).join(', ') || 'нет'}</p>
+                            </div>
+                            <div className="rounded-md bg-gray-50 p-2 dark:bg-[#0d1525]">
+                              <p className="text-gray-500 dark:text-[#92a4c9]">Модерация</p>
+                              <p className="text-base font-semibold text-gray-900 dark:text-white">
+                                {selectedUserDetails.details.moderation_actions_count}
+                              </p>
+                              <p>действий</p>
+                            </div>
+                            {selectedUserDetails.details.chat_counts.latest_message_at ? (
+                              <p className="col-span-2 text-xs">
+                                Последнее сообщение: {formatDateTime(selectedUserDetails.details.chat_counts.latest_message_at)}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-500 dark:text-[#92a4c9]">Детали появятся после загрузки.</p>
+                        )}
                       </div>
 
                       {selectedUser.subscription_url ? (

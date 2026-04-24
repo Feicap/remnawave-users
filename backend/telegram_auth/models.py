@@ -167,3 +167,33 @@ class ChatModerationAction(models.Model):
 
     def __str__(self) -> str:
         return f"{self.action}:{self.message_id}:{self.acted_by_user_id}:{self.created_at.isoformat()}"
+
+
+class UserNotification(models.Model):
+    KIND_PAYMENT = "payment"
+    KIND_CHAT = "chat"
+    KIND_ACCOUNT = "account"
+    KIND_SYSTEM = "system"
+    KIND_CHOICES = (
+        (KIND_PAYMENT, "Payment"),
+        (KIND_CHAT, "Chat"),
+        (KIND_ACCOUNT, "Account"),
+        (KIND_SYSTEM, "System"),
+    )
+
+    user_id = models.BigIntegerField(db_index=True)
+    kind = models.CharField(max_length=24, choices=KIND_CHOICES, default=KIND_SYSTEM, db_index=True)
+    title = models.CharField(max_length=255)
+    body = models.TextField(blank=True, default="")
+    link_url = models.CharField(max_length=2048, blank=True, default="")
+    is_read = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user_id", "is_read", "created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.user_id}:{self.kind}:{self.title}"

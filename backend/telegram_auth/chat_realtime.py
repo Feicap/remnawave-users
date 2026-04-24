@@ -68,6 +68,9 @@ class ChatWsConnection:
 
 def _can_receive_event(connection: ChatWsConnection, event: dict[str, Any]) -> bool:
     scope = str(event.get("scope", "")).strip()
+    if scope == "notification":
+        target_user_id = _parse_optional_int(str(event.get("user_id", "")).strip())
+        return target_user_id == connection.user_id
     if scope != "private":
         return True
     if connection.is_admin:

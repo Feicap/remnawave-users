@@ -15,7 +15,48 @@ export interface AdminUserItem {
   has_password: boolean
   has_remnawave_access: boolean
   subscription_url: string
+  chat_telegram_id?: number | null
+  avatar_scale?: number
+  avatar_position_x?: number
+  avatar_position_y?: number
+  details?: AdminUserDetails
   re_register_required?: boolean
+}
+
+export interface AdminUserDetails {
+  payment_counts: {
+    total: number
+    pending: number
+    approved: number
+    rejected: number
+  }
+  recent_payment_proofs: {
+    id: number
+    user_id: number
+    username: string
+    status: 'pending' | 'approved' | 'rejected'
+    created_at: string
+    reviewed_at: string | null
+    reviewed_by: number | null
+    reviewed_by_username: string
+    file_url: string
+  }[]
+  chat_counts: {
+    total: number
+    sent: number
+    received: number
+    global: number
+    private: number
+    deleted: number
+    latest_message_at: string | null
+  }
+  moderation_actions_count: number
+  auth_identities: {
+    provider: string
+    provider_user_id: string
+    created_at: string | null
+    updated_at: string | null
+  }[]
 }
 
 export interface AdminUsersMetrics {
@@ -31,6 +72,7 @@ export interface AdminUsersPagination {
   limit: number
   offset: number
   has_more: boolean
+  filtered_total?: number
 }
 
 export interface AdminUsersResponse {

@@ -1,6 +1,7 @@
 ﻿import type { SyntheticEvent } from 'react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router'
+import NotificationBell from '../components/NotificationBell'
 import { useChatUnreadPing } from '../hooks/useChatUnreadPing'
 import type { AuthUser } from '../types/auth'
 import { isAdminUser } from '../utils/admin'
@@ -38,11 +39,8 @@ function handleAvatarError(event: SyntheticEvent<HTMLImageElement>): void {
 export default function Profile() {
   const navigate = useNavigate()
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
+  const [presenceNow, setPresenceNow] = useState(() => Date.now())
   const { totalUnread } = useChatUnreadPing(user)
-  const initialExpiry = new Date('2026-04-04T13:33:00')
-  const now = new Date()
-  const msInDay = 24 * 60 * 60 * 1000
-  const renewPeriodMs = 30 * msInDay
 
   useEffect(() => {
     if (!user) {
@@ -50,28 +48,42 @@ export default function Profile() {
       return
     }
 
-    refreshStoredAuthUser(user)
-      .then((nextUser) => setUser(nextUser))
-      .catch(() => {
+    const currentUser = user
+    let cancelled = false
+    async function refreshProfile() {
+      try {
+        const nextUser = await refreshStoredAuthUser(currentUser)
+        if (!cancelled) {
+          setUser(nextUser)
+        }
+      } catch {
         // Оставляем данные из localStorage, если сейчас не удалось обновить профиль.
-      })
+      }
+    }
+
+    void refreshProfile()
+    const intervalId = window.setInterval(() => {
+      void refreshProfile()
+    }, 30000)
+
+    const onFocus = () => {
+      void refreshProfile()
+    }
+    window.addEventListener('focus', onFocus)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [navigate, user?.id])
 
-  let expiresAt = initialExpiry
-  if (now.getTime() > initialExpiry.getTime()) {
-    const elapsedMs = now.getTime() - initialExpiry.getTime()
-    const periodsPassed = Math.floor(elapsedMs / renewPeriodMs) + 1
-    expiresAt = new Date(initialExpiry.getTime() + periodsPassed * renewPeriodMs)
-  }
-
-  const daysLeft = Math.max(0, Math.ceil((expiresAt.getTime() - now.getTime()) / msInDay))
-  const expiresAtFormatted = expiresAt.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setPresenceNow(Date.now())
+    }, 15000)
+    return () => window.clearInterval(intervalId)
+  }, [])
 
   function handleLogout() {
     clearStoredAuth()
@@ -103,6 +115,15 @@ export default function Profile() {
   const telegramId = getTelegramId(user)
   const avatarUrl = getAvatarUrl(user.photo)
   const avatarImageStyle = getAvatarImageStyle(user)
+  const onlineWindowSeconds = user.online_window_seconds ?? 120
+  const lastSeenAt = user.last_seen_at ? new Date(user.last_seen_at) : null
+  const isOnline = lastSeenAt
+    ? presenceNow - lastSeenAt.getTime() <= onlineWindowSeconds * 1000
+    : Boolean(user.is_online)
+  const lastSeenLabel =
+    lastSeenAt && !Number.isNaN(lastSeenAt.getTime())
+      ? lastSeenAt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+      : 'нет данных'
 
   return (
     <div className="flex min-h-screen flex-col md:h-screen md:flex-row">
@@ -211,24 +232,26 @@ export default function Profile() {
               <p className="text-4xl font-black leading-tight tracking-[-0.033em] text-gray-900 dark:text-white">Панель управления</p>
               <p className="text-base font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">Обзор вашей подписки.</p>
             </div>
-            <button className="flex h-10 min-w-[84px] cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-lg bg-primary px-4 text-sm font-bold leading-normal tracking-[0.015em] text-white hover:bg-primary/90">
-              <span className="material-symbols-outlined text-base">autorenew</span>
-              <span className="truncate">Продлить подписку</span>
-            </button>
+            <NotificationBell user={user} />
           </div>
 
           <div className="mb-10 grid grid-cols-1 gap-6 md:grid-cols-2">
             <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-6 dark:border-[#324467] dark:bg-[#111722]">
               <p className="text-base font-medium leading-normal text-gray-600 dark:text-white">Статус подписки</p>
               <div className="flex items-center gap-2">
-                <span className="h-3 w-3 rounded-full bg-green-500"></span>
-                <p className="text-2xl font-bold leading-tight tracking-light text-green-500">Активна</p>
+                <span className={isOnline ? 'h-3 w-3 rounded-full bg-green-500' : 'h-3 w-3 rounded-full bg-gray-400'}></span>
+                <p className={isOnline ? 'text-2xl font-bold leading-tight tracking-light text-green-500' : 'text-2xl font-bold leading-tight tracking-light text-gray-500'}>
+                  {isOnline ? 'Онлайн' : 'Не в сети'}
+                </p>
               </div>
+              <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">
+                Онлайн считается за последние {Math.round(onlineWindowSeconds / 60)} мин. Последняя активность: {lastSeenLabel}.
+              </p>
             </div>
             <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-6 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-base font-medium leading-normal text-gray-600 dark:text-white">Истекает</p>
-              <p className="text-2xl font-bold leading-tight tracking-light text-gray-900 dark:text-white">{expiresAtFormatted}</p>
-              <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">Истекает через {daysLeft} дней.</p>
+              <p className="text-base font-medium leading-normal text-gray-600 dark:text-white">Доступ</p>
+              <p className="text-2xl font-bold leading-tight tracking-light text-gray-900 dark:text-white">Бессрочно</p>
+              <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">Срок подписки не ограничен этим кабинетом.</p>
             </div>
           </div>
 

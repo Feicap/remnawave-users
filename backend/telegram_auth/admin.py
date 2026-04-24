@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AuthIdentity, ChatMessage, ChatModerationAction, ChatReadMarker, ChatUserProfile, PaymentProof
+from .models import AuthIdentity, ChatMessage, ChatModerationAction, ChatReadMarker, ChatUserProfile, PaymentProof, UserNotification
 
 
 @admin.register(PaymentProof)
@@ -43,3 +43,10 @@ class AuthIdentityAdmin(admin.ModelAdmin):
     list_display = ("id", "user_id", "provider", "provider_user_id", "updated_at")
     list_filter = ("provider",)
     search_fields = ("user_id", "provider_user_id")
+
+
+@admin.register(UserNotification)
+class UserNotificationAdmin(admin.ModelAdmin):
+    list_display = ("id", "user_id", "kind", "title", "is_read", "created_at", "read_at")
+    list_filter = ("kind", "is_read", "created_at")
+    search_fields = ("user_id", "title", "body")

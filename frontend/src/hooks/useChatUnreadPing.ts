@@ -45,8 +45,10 @@ export function useChatUnreadPing(user: AuthUser | null, intervalMs: number = DE
 
   useEffect(() => {
     if (!user) {
-      setSummary(EMPTY_SUMMARY)
-      setTotalUnread(0)
+      queueMicrotask(() => {
+        setSummary(EMPTY_SUMMARY)
+        setTotalUnread(0)
+      })
       localStorage.setItem(CHAT_UNREAD_STORAGE_KEY, '0')
       return
     }

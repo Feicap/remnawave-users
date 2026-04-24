@@ -16,13 +16,14 @@ from django.utils import timezone as dj_timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from .chat_realtime import publish_chat_event
-from .models import AuthIdentity, ChatMessage, ChatModerationAction, ChatReadMarker, ChatUserProfile, PaymentProof
+from .models import AuthIdentity, ChatMessage, ChatModerationAction, ChatReadMarker, ChatUserProfile, PaymentProof, UserNotification
 from .remnawave_client import get_remnawave_user_sync
 from .services import get_telegram_avatar_bytes, has_telegram_config, verify_telegram_auth
 
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".heic", ".svg"}
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
 ONLINE_WINDOW_MINUTES = max(1, int(os.getenv("ADMIN_ONLINE_WINDOW_MINUTES", "15")))
+PROFILE_ONLINE_WINDOW_SECONDS = 120
 DEFAULT_ADMIN_USERS_PAGE_SIZE = 200
 DEFAULT_CHAT_PAGE_SIZE = 100
 MAX_CHAT_PAGE_SIZE = 200
@@ -378,6 +379,16 @@ def _touch_user_last_login(*, user_id: int | None = None, email: str | None = No
     user.save(update_fields=["last_login"])
 
 
+def _attach_presence_payload(payload: dict, *, user_id: int) -> dict:
+    user = User.objects.filter(id=user_id).only("last_login").first()
+    last_seen_at = user.last_login if user is not None else None
+    online_after = dj_timezone.now() - timedelta(seconds=PROFILE_ONLINE_WINDOW_SECONDS)
+    payload["is_online"] = _is_online(last_seen_at, online_after)
+    payload["last_seen_at"] = last_seen_at.isoformat() if last_seen_at else None
+    payload["online_window_seconds"] = PROFILE_ONLINE_WINDOW_SECONDS
+    return payload
+
+
 def _merge_remnawave_users(primary: dict | None, secondary: dict | None) -> dict | None:
     if primary is None:
         return secondary
@@ -469,6 +480,62 @@ def _is_admin_identity(user_id: int | None, telegram_id: int | None = None) -> b
     return telegram_id is not None and _is_admin(telegram_id)
 
 
+def _resolve_admin_user_ids() -> set[int]:
+    admin_ids = _parse_admin_ids()
+    if not admin_ids:
+        return set()
+
+    result = set(User.objects.filter(id__in=admin_ids).values_list("id", flat=True))
+    result.update(
+        ChatUserProfile.objects.filter(telegram_id__in=admin_ids).values_list("user_id", flat=True)
+    )
+    return result
+
+
+def _serialize_notification(notification: UserNotification) -> dict:
+    return {
+        "id": notification.id,
+        "kind": notification.kind,
+        "title": notification.title,
+        "body": notification.body,
+        "link_url": notification.link_url,
+        "is_read": notification.is_read,
+        "created_at": notification.created_at.isoformat(),
+        "read_at": notification.read_at.isoformat() if notification.read_at else None,
+    }
+
+
+def _create_user_notification(
+    *,
+    user_id: int,
+    kind: str,
+    title: str,
+    body: str = "",
+    link_url: str = "",
+) -> UserNotification:
+    notification = UserNotification.objects.create(
+        user_id=user_id,
+        kind=kind,
+        title=title[:255],
+        body=body,
+        link_url=link_url[:2048],
+    )
+    publish_chat_event(
+        {
+            "event": "notification_created",
+            "scope": "notification",
+            "user_id": user_id,
+            "notification_id": notification.id,
+        }
+    )
+    return notification
+
+
+def _notify_admins(*, kind: str, title: str, body: str = "", link_url: str = "") -> None:
+    for admin_user_id in _resolve_admin_user_ids():
+        _create_user_notification(user_id=admin_user_id, kind=kind, title=title, body=body, link_url=link_url)
+
+
 def _serialize_proof(proof: PaymentProof) -> dict:
     return {
         "id": proof.id,
@@ -556,6 +623,55 @@ def _serialize_admin_user(user: User, *, online_after: datetime) -> dict:
         "avatar_position_x": avatar_presentation["avatar_position_x"],
         "avatar_position_y": avatar_presentation["avatar_position_y"],
     }
+
+
+def _serialize_admin_user_detail(user: User, *, online_after: datetime) -> dict:
+    payload = _serialize_admin_user(user, online_after=online_after)
+    proof_rows = PaymentProof.objects.filter(user_id=user.id)
+    payment_counts = {
+        "total": proof_rows.count(),
+        "pending": proof_rows.filter(status=PaymentProof.STATUS_PENDING).count(),
+        "approved": proof_rows.filter(status=PaymentProof.STATUS_APPROVED).count(),
+        "rejected": proof_rows.filter(status=PaymentProof.STATUS_REJECTED).count(),
+    }
+    recent_proofs = list(proof_rows.order_by("-created_at")[:5])
+    chat_rows = ChatMessage.objects.filter(Q(sender_id=user.id) | Q(recipient_id=user.id))
+    latest_chat = chat_rows.order_by("-created_at").first()
+    identities = list(
+        AuthIdentity.objects.filter(user_id=user.id)
+        .order_by("provider")
+        .values("provider", "provider_user_id", "created_at", "updated_at")
+    )
+    payload["details"] = {
+        "payment_counts": payment_counts,
+        "recent_payment_proofs": [
+            {
+                **_serialize_proof(proof),
+                "file_url": f"/api/payment-proofs/{proof.id}/file/",
+            }
+            for proof in recent_proofs
+        ],
+        "chat_counts": {
+            "total": chat_rows.count(),
+            "sent": chat_rows.filter(sender_id=user.id).count(),
+            "received": chat_rows.filter(recipient_id=user.id).count(),
+            "global": chat_rows.filter(scope=ChatMessage.SCOPE_GLOBAL).count(),
+            "private": chat_rows.filter(scope=ChatMessage.SCOPE_PRIVATE).count(),
+            "deleted": chat_rows.filter(is_deleted=True).count(),
+            "latest_message_at": latest_chat.created_at.isoformat() if latest_chat else None,
+        },
+        "moderation_actions_count": ChatModerationAction.objects.filter(acted_by_user_id=user.id).count(),
+        "auth_identities": [
+            {
+                "provider": row["provider"],
+                "provider_user_id": row["provider_user_id"],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+            }
+            for row in identities
+        ],
+    }
+    return payload
 
 
 def _resolve_chat_display_name(
@@ -972,7 +1088,8 @@ def _serialize_profile_settings(*, user_id: int, profile: ChatUserProfile, teleg
         "avatar_position_x": avatar_presentation["avatar_position_x"],
         "avatar_position_y": avatar_presentation["avatar_position_y"],
     }
-    return _attach_binding_flags(payload, user_id=user_id)
+    payload = _attach_binding_flags(payload, user_id=user_id)
+    return _attach_presence_payload(payload, user_id=user_id)
 
 
 def _apply_profile_to_auth_payload(payload: dict, profile: ChatUserProfile) -> dict:
@@ -987,7 +1104,8 @@ def _apply_profile_to_auth_payload(payload: dict, profile: ChatUserProfile) -> d
     payload["avatar_scale"] = float(profile.avatar_scale)
     payload["avatar_position_x"] = int(profile.avatar_position_x)
     payload["avatar_position_y"] = int(profile.avatar_position_y)
-    return _attach_binding_flags(payload, user_id=profile.user_id)
+    payload = _attach_binding_flags(payload, user_id=profile.user_id)
+    return _attach_presence_payload(payload, user_id=profile.user_id)
 
 
 def _parse_telegram_auth_payload(request: HttpRequest) -> tuple[dict | None, JsonResponse | None]:
@@ -1255,6 +1373,7 @@ def auth_me(request: HttpRequest) -> JsonResponse:
     remnawave_user = _resolve_remnawave_user(email=resolved_email, telegram_id=telegram_id)
 
     resolved_auth_provider = auth_provider or ("telegram" if telegram_id is not None and not resolved_email else "email")
+    _touch_user_last_login(user_id=resolved_user_id, email=resolved_email)
 
     response = _build_auth_response(
         user_id=resolved_user_id,
@@ -1277,8 +1396,6 @@ def auth_me(request: HttpRequest) -> JsonResponse:
         auth_provider=response_payload.get("auth_provider", "") or resolved_auth_provider,
     )
     response_payload = _apply_profile_to_auth_payload(response_payload, profile)
-    if resolved_auth_provider == "email":
-        _touch_user_last_login(user_id=resolved_user_id, email=resolved_email)
     return JsonResponse(response_payload)
 
 
@@ -1604,6 +1721,12 @@ def payment_proofs_collection(request: HttpRequest) -> JsonResponse:
         file=uploaded,
         status=PaymentProof.STATUS_PENDING,
     )
+    _notify_admins(
+        kind=UserNotification.KIND_PAYMENT,
+        title="Новая заявка на проверку оплаты",
+        body=f"{username or user_id} отправил фото оплаты.",
+        link_url="/admin-check",
+    )
     data = _serialize_proof(proof)
     data["file_url"] = f"/api/payment-proofs/{proof.id}/file/"
     return JsonResponse(data, status=201)
@@ -1908,6 +2031,13 @@ def chat_messages(request: HttpRequest) -> JsonResponse:
             scope=ChatMessage.SCOPE_PRIVATE,
             peer_id=user_id,
         ).first()
+        _create_user_notification(
+            user_id=recipient_id,
+            kind=UserNotification.KIND_CHAT,
+            title="Новое личное сообщение",
+            body=f"{sender_name}: {body[:140]}",
+            link_url="/chat",
+        )
     payload = _serialize_chat_message(
         message,
         viewer_id=user_id,
@@ -2100,6 +2230,71 @@ def chat_unread(request: HttpRequest) -> JsonResponse:
     return JsonResponse(_chat_unread_summary(user_id))
 
 
+@csrf_exempt
+def notifications_collection(request: HttpRequest) -> JsonResponse:
+    user_id, email, telegram_id, _, _, _, _ = _extract_auth_identity(request)
+    auth_user = _ensure_auth_user(user_id_hint=user_id, email=email, telegram_id=telegram_id)
+    if auth_user is None:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+    user_id = auth_user.id
+
+    if request.method == "GET":
+        raw_limit = request.GET.get("limit", "20").strip()
+        raw_unread_only = request.GET.get("unread_only", "").strip()
+        if raw_limit and not raw_limit.isdigit():
+            return JsonResponse({"error": "limit must be integer"}, status=400)
+        limit = max(1, min(100, int(raw_limit or "20")))
+        unread_only = _parse_optional_bool(raw_unread_only) if raw_unread_only else False
+        query = UserNotification.objects.filter(user_id=user_id)
+        if unread_only:
+            query = query.filter(is_read=False)
+        items = list(query.order_by("-id")[:limit])
+        unread_count = UserNotification.objects.filter(user_id=user_id, is_read=False).count()
+        return JsonResponse(
+            {
+                "items": [_serialize_notification(notification) for notification in items],
+                "unread_count": unread_count,
+            }
+        )
+
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Invalid method"}, status=405)
+
+    UserNotification.objects.filter(user_id=user_id, is_read=False).update(is_read=True, read_at=dj_timezone.now())
+    publish_chat_event({"event": "notifications_read", "scope": "notification", "user_id": user_id})
+    return JsonResponse({"ok": True, "unread_count": 0})
+
+
+@csrf_exempt
+def notification_item(request: HttpRequest, notification_id: int) -> JsonResponse:
+    user_id, email, telegram_id, _, _, _, _ = _extract_auth_identity(request)
+    auth_user = _ensure_auth_user(user_id_hint=user_id, email=email, telegram_id=telegram_id)
+    if auth_user is None:
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+    user_id = auth_user.id
+
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Invalid method"}, status=405)
+
+    try:
+        notification = UserNotification.objects.get(id=notification_id, user_id=user_id)
+    except UserNotification.DoesNotExist:
+        return JsonResponse({"error": "Notification not found"}, status=404)
+
+    payload, parse_error = _parse_mutation_payload(request)
+    if parse_error is not None:
+        return parse_error
+
+    is_read = _parse_optional_bool(payload.get("is_read"))
+    if is_read is None:
+        is_read = True
+    notification.is_read = is_read
+    notification.read_at = dj_timezone.now() if is_read else None
+    notification.save(update_fields=["is_read", "read_at"])
+    publish_chat_event({"event": "notification_updated", "scope": "notification", "user_id": user_id})
+    return JsonResponse(_serialize_notification(notification))
+
+
 def admin_chat_messages(request: HttpRequest) -> JsonResponse:
     user_id, _ = _extract_auth_user(request)
     _, _, telegram_id, _, _, _, _ = _extract_auth_identity(request)
@@ -2259,17 +2454,52 @@ def admin_users(request: HttpRequest) -> JsonResponse:
     limit = max(1, min(500, int(raw_limit)))
     offset = int(raw_offset)
     online_after = dj_timezone.now() - timedelta(minutes=ONLINE_WINDOW_MINUTES)
+    search_term = request.GET.get("q", "").strip()
+    filter_name = request.GET.get("filter", "all").strip()
+    if filter_name not in {"all", "online", "remnawave", "need-password", "payment-pending"}:
+        return JsonResponse({"error": "Invalid filter"}, status=400)
 
     users_queryset = User.objects.all().order_by("-last_login", "-date_joined", "id")
-    total_users = users_queryset.count()
-    users = list(users_queryset[offset : offset + limit])
+    if search_term:
+        search_filter = Q(username__icontains=search_term) | Q(email__icontains=search_term)
+        if search_term.isdigit():
+            search_filter |= Q(id=int(search_term))
+        matching_profile_ids = ChatUserProfile.objects.filter(
+            Q(display_name__icontains=search_term)
+            | Q(username__icontains=search_term)
+            | Q(email__icontains=search_term)
+            | Q(telegram_username__icontains=search_term)
+        ).values_list("user_id", flat=True)
+        users_queryset = users_queryset.filter(search_filter | Q(id__in=matching_profile_ids))
 
-    items = [_serialize_admin_user(user, online_after=online_after) for user in users]
+    if filter_name == "online":
+        users_queryset = users_queryset.filter(last_login__gte=online_after)
+    elif filter_name == "need-password":
+        users_queryset = users_queryset.filter(password__startswith="!")
+    elif filter_name == "payment-pending":
+        pending_user_ids = PaymentProof.objects.filter(status=PaymentProof.STATUS_PENDING).values_list("user_id", flat=True)
+        users_queryset = users_queryset.filter(id__in=pending_user_ids)
+
+    filtered_total = users_queryset.count()
+    if filter_name == "remnawave":
+        candidate_users = list(users_queryset[:1000])
+        serialized_candidates = [
+            _serialize_admin_user(user, online_after=online_after)
+            for user in candidate_users
+        ]
+        remnawave_items = [item for item in serialized_candidates if item["has_remnawave_access"]]
+        items = remnawave_items[offset : offset + limit]
+        filtered_total = len(remnawave_items)
+    else:
+        users = list(users_queryset[offset : offset + limit])
+        items = [_serialize_admin_user(user, online_after=online_after) for user in users]
+
     remnawave_access_users = sum(1 for item in items if item["has_remnawave_access"])
     online_users = User.objects.filter(last_login__gte=online_after).count()
     users_without_password = User.objects.filter(password__startswith="!").count()
     today_start = dj_timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
     active_today = User.objects.filter(last_login__gte=today_start).count()
+    total_users = User.objects.count()
 
     return JsonResponse(
         {
@@ -2285,7 +2515,8 @@ def admin_users(request: HttpRequest) -> JsonResponse:
             "pagination": {
                 "limit": limit,
                 "offset": offset,
-                "has_more": offset + len(items) < total_users,
+                "has_more": offset + len(items) < filtered_total,
+                "filtered_total": filtered_total,
             },
         }
     )
@@ -2322,17 +2553,21 @@ def admin_update_user_credentials(request: HttpRequest, target_user_id: int) -> 
         return JsonResponse({"error": "Unauthorized"}, status=401)
     if not _is_admin_identity(user_id, telegram_id):
         return JsonResponse({"error": "Forbidden"}, status=403)
-    if request.method != "PATCH":
+    if request.method not in {"GET", "PATCH"}:
         return JsonResponse({"error": "Invalid method"}, status=405)
-
-    payload, parse_error = _parse_mutation_payload(request)
-    if parse_error is not None:
-        return parse_error
 
     try:
         user = User.objects.get(id=target_user_id)
     except User.DoesNotExist:
         return JsonResponse({"error": "User not found"}, status=404)
+
+    if request.method == "GET":
+        online_after = dj_timezone.now() - timedelta(minutes=ONLINE_WINDOW_MINUTES)
+        return JsonResponse(_serialize_admin_user_detail(user, online_after=online_after))
+
+    payload, parse_error = _parse_mutation_payload(request)
+    if parse_error is not None:
+        return parse_error
 
     profile, _ = ChatUserProfile.objects.get_or_create(user_id=target_user_id)
 
@@ -2482,6 +2717,14 @@ def admin_update_user_credentials(request: HttpRequest, target_user_id: int) -> 
         user.save(update_fields=list(dict.fromkeys(updated_user_fields)))
     if updated_profile_fields:
         profile.save(update_fields=list(dict.fromkeys(updated_profile_fields + ["updated_at"])))
+    if update_login or update_password or update_profile_data or uploaded_avatar is not None or remove_avatar:
+        _create_user_notification(
+            user_id=target_user_id,
+            kind=UserNotification.KIND_ACCOUNT,
+            title="Профиль обновлён",
+            body="Администратор обновил данные вашего аккаунта.",
+            link_url="/profile-settings",
+        )
 
     online_after = dj_timezone.now() - timedelta(minutes=ONLINE_WINDOW_MINUTES)
     return JsonResponse(_serialize_admin_user(user, online_after=online_after))
@@ -2505,6 +2748,13 @@ def admin_reset_user_password(request: HttpRequest, target_user_id: int) -> Json
 
     user.set_unusable_password()
     user.save(update_fields=["password"])
+    _create_user_notification(
+        user_id=target_user_id,
+        kind=UserNotification.KIND_ACCOUNT,
+        title="Пароль сброшен",
+        body="Администратор сбросил пароль. Для входа потребуется повторная регистрация.",
+        link_url="/auth",
+    )
 
     online_after = dj_timezone.now() - timedelta(minutes=ONLINE_WINDOW_MINUTES)
     payload = _serialize_admin_user(user, online_after=online_after)
@@ -2558,6 +2808,22 @@ def admin_update_payment_proof(request: HttpRequest, proof_id: int) -> JsonRespo
     proof.reviewed_by = user_id
     proof.reviewed_by_username = username
     proof.save(update_fields=["status", "reviewed_at", "reviewed_by", "reviewed_by_username"])
+    if status == PaymentProof.STATUS_APPROVED:
+        title = "Оплата подтверждена"
+        body = "Администратор подтвердил вашу отправку оплаты."
+    elif status == PaymentProof.STATUS_REJECTED:
+        title = "Оплата отклонена"
+        body = "Администратор отклонил отправленное фото оплаты."
+    else:
+        title = "Оплата снова на проверке"
+        body = "Статус вашей отправки оплаты изменён на ожидание."
+    _create_user_notification(
+        user_id=proof.user_id,
+        kind=UserNotification.KIND_PAYMENT,
+        title=title,
+        body=body,
+        link_url="/profile-pay",
+    )
 
     data = _serialize_proof(proof)
     data["file_url"] = f"/api/payment-proofs/{proof.id}/file/"

@@ -54,7 +54,6 @@ export function useChatRealtime(
 
   useEffect(() => {
     if (!enabled || !user) {
-      setIsConnected(false)
       return
     }
 
