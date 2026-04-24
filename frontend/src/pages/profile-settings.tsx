@@ -178,6 +178,7 @@ export default function ProfileSettings() {
   const [linkError, setLinkError] = useState('')
   const [linkNotice, setLinkNotice] = useState('')
   const [isAvatarDragging, setIsAvatarDragging] = useState(false)
+  const userRef = useRef<AuthUser | null>(user)
   const avatarEditorRef = useRef<HTMLDivElement | null>(null)
   const dragStateRef = useRef<{
     pointerId: number
@@ -194,15 +195,20 @@ export default function ProfileSettings() {
     navigate('/auth')
   }, [navigate])
 
+  useEffect(() => {
+    userRef.current = user
+  }, [user])
+
   const loadProfileSettings = useCallback(async () => {
-    if (!user) {
+    const currentUser = userRef.current
+    if (!currentUser) {
       return
     }
 
     setIsLoadingSettings(true)
     try {
       const response = await fetch('/api/profile/settings/', {
-        headers: buildAuthHeaders(user),
+        headers: buildAuthHeaders(currentUser),
       })
       if (response.status === 401 || response.status === 403) {
         handleUnauthorized()
@@ -215,9 +221,9 @@ export default function ProfileSettings() {
 
       const payload = (await response.json()) as ProfileSettingsPayload
       setProfileDisplayName(payload.display_name || payload.username || '')
-      const nextUser = mergeUserWithProfilePayload(user, payload)
+      const nextUser = mergeUserWithProfilePayload(currentUser, payload)
       setCropRect(cropRectFromAvatarPresentation(payload))
-      if (!isSameUserSnapshot(user, nextUser)) {
+      if (!isSameUserSnapshot(currentUser, nextUser)) {
         storeAuthUser(nextUser)
         setUser(nextUser)
       }
@@ -232,7 +238,7 @@ export default function ProfileSettings() {
     } finally {
       setIsLoadingSettings(false)
     }
-  }, [handleUnauthorized, user])
+  }, [handleUnauthorized])
 
   useEffect(() => {
     if (!user) {
@@ -245,7 +251,7 @@ export default function ProfileSettings() {
       setProfileError(error instanceof Error ? `Не удалось загрузить настройки профиля: ${error.message}` : 'Не удалось загрузить настройки профиля')
       setIsLoadingSettings(false)
     })
-  }, [loadProfileSettings])
+  }, [loadProfileSettings, user?.id])
 
   useEffect(() => {
     if (!avatarFile) {
@@ -539,13 +545,18 @@ export default function ProfileSettings() {
       if (avatarUpdated) {
         bumpStoredAvatarVersion()
       }
-      setCropRect(cropRectFromAvatarPresentation(payload))
+      const effectivePayload: ProfileSettingsPayload = {
+        ...payload,
+        display_name: normalizedDisplayName,
+        photo: avatarFile ? `/api/profile/avatar/${payload.id}/` : removeAvatar ? '' : payload.photo,
+      }
+      setCropRect(cropRectFromAvatarPresentation(effectivePayload))
 
-      const nextUser = mergeUserWithProfilePayload(user, payload)
+      const nextUser = mergeUserWithProfilePayload(user, effectivePayload)
       storeAuthUser(nextUser)
       setUser(nextUser)
-      setProfileDisplayName(payload.display_name || payload.username || '')
-      setLinkEmail(payload.email || nextUser.email || '')
+      setProfileDisplayName(effectivePayload.display_name || effectivePayload.username || '')
+      setLinkEmail(effectivePayload.email || nextUser.email || '')
 
       setAvatarFile(null)
       setRemoveAvatar(false)
