@@ -29,10 +29,17 @@ export function normalizeAvatarPresentation(meta?: AvatarPresentation): Required
 
 export function getAvatarImageStyle(meta?: AvatarPresentation): CSSProperties {
   const normalized = normalizeAvatarPresentation(meta)
+  const scale = normalized.avatar_scale
+  const visibleSize = 100 / scale
+  const halfVisibleSize = visibleSize / 2
+  const centerX = clamp(normalized.avatar_position_x, halfVisibleSize, 100 - halfVisibleSize)
+  const centerY = clamp(normalized.avatar_position_y, halfVisibleSize, 100 - halfVisibleSize)
+  const offsetX = centerX - halfVisibleSize
+  const offsetY = centerY - halfVisibleSize
+
   return {
-    objectPosition: `${normalized.avatar_position_x}% ${normalized.avatar_position_y}%`,
-    transform: `scale(${normalized.avatar_scale})`,
-    transformOrigin: 'center center',
+    objectPosition: 'center center',
+    transform: `scale(${scale}) translate(${-offsetX}%, ${-offsetY}%)`,
+    transformOrigin: 'top left',
   }
 }
-

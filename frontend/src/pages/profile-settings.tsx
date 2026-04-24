@@ -22,8 +22,6 @@ const DEFAULT_AVATAR =
 const TELEGRAM_BOT_NAME = import.meta.env.VITE_TELEGRAM_BOT_NAME
 const MIN_AVATAR_SCALE = 1
 const MAX_AVATAR_SCALE = 3
-const MIN_AVATAR_POSITION = 0
-const MAX_AVATAR_POSITION = 100
 const MIN_CROP_SIZE_PERCENT = 100 / MAX_AVATAR_SCALE
 
 type CropHandle = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
@@ -52,13 +50,12 @@ function cropRectFromAvatarPresentation(meta?: AvatarPresentation): CropRect {
   const normalized = normalizeAvatarPresentation(meta)
   const scale = clamp(normalized.avatar_scale, MIN_AVATAR_SCALE, MAX_AVATAR_SCALE)
   const size = clamp(100 / scale, MIN_CROP_SIZE_PERCENT, 100)
-  // getAvatarImageStyle uses object-position + transform(scale) around center.
-  // Effective visible center is shifted by scale from position delta.
-  const effectiveCenterX = 50 + (normalized.avatar_position_x - 50) * scale
-  const effectiveCenterY = 50 + (normalized.avatar_position_y - 50) * scale
+  const halfSize = size / 2
+  const centerX = clamp(normalized.avatar_position_x, halfSize, 100 - halfSize)
+  const centerY = clamp(normalized.avatar_position_y, halfSize, 100 - halfSize)
   return normalizeCropRect({
-    x: effectiveCenterX - size / 2,
-    y: effectiveCenterY - size / 2,
+    x: centerX - halfSize,
+    y: centerY - halfSize,
     size,
   })
 }
@@ -66,15 +63,14 @@ function cropRectFromAvatarPresentation(meta?: AvatarPresentation): CropRect {
 function avatarPresentationFromCropRect(rect: CropRect): Required<AvatarPresentation> {
   const normalizedRect = normalizeCropRect(rect)
   const avatarScale = clamp(100 / normalizedRect.size, MIN_AVATAR_SCALE, MAX_AVATAR_SCALE)
-  const effectiveCenterX = normalizedRect.x + normalizedRect.size / 2
-  const effectiveCenterY = normalizedRect.y + normalizedRect.size / 2
-  const storedPositionX = 50 + (effectiveCenterX - 50) / avatarScale
-  const storedPositionY = 50 + (effectiveCenterY - 50) / avatarScale
+  const centerX = normalizedRect.x + normalizedRect.size / 2
+  const centerY = normalizedRect.y + normalizedRect.size / 2
+  const halfSize = (100 / avatarScale) / 2
 
   return {
     avatar_scale: avatarScale,
-    avatar_position_x: clamp(storedPositionX, MIN_AVATAR_POSITION, MAX_AVATAR_POSITION),
-    avatar_position_y: clamp(storedPositionY, MIN_AVATAR_POSITION, MAX_AVATAR_POSITION),
+    avatar_position_x: clamp(centerX, halfSize, 100 - halfSize),
+    avatar_position_y: clamp(centerY, halfSize, 100 - halfSize),
   }
 }
 
