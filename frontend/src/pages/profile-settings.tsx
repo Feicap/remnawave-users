@@ -120,6 +120,7 @@ function mergeUserWithProfilePayload(user: AuthUser, payload: ProfileSettingsPay
 
   return {
     ...user,
+    id: payload.id ?? user.id,
     display_name: payload.display_name ?? user.display_name,
     username: payload.username ?? user.username,
     photo: payload.photo ?? user.photo,

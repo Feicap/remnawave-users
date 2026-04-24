@@ -12,6 +12,7 @@ from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Max, Q
 from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
+from django.http.multipartparser import MultiPartParser, MultiPartParserError
 from django.utils.dateparse import parse_datetime
 from django.utils import timezone as dj_timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -1140,6 +1141,24 @@ def _parse_telegram_auth_payload(request: HttpRequest) -> tuple[dict | None, Jso
     return payload, None
 
 
+def _parse_form_mutation_payload(request: HttpRequest) -> tuple[dict, object, JsonResponse | None]:
+    content_type = (request.content_type or "").lower()
+    if request.method != "POST" and content_type.startswith("multipart/form-data"):
+        try:
+            post_data, file_data = MultiPartParser(
+                request.META,
+                request,
+                request.upload_handlers,
+                request.encoding,
+            ).parse()
+        except MultiPartParserError:
+            return {}, {}, JsonResponse({"error": "Invalid multipart payload"}, status=400)
+        return dict(post_data.items()), file_data, None
+
+    payload, parse_error = _parse_mutation_payload(request)
+    return payload, request.FILES, parse_error
+
+
 @csrf_exempt
 def telegram_login(request: HttpRequest) -> JsonResponse:
     if request.method != "POST":
@@ -1589,7 +1608,7 @@ def profile_settings(request: HttpRequest) -> JsonResponse:
     if request.method not in {"PATCH", "POST"}:
         return JsonResponse({"error": "Invalid method"}, status=405)
 
-    payload, parse_error = _parse_mutation_payload(request)
+    payload, uploaded_files, parse_error = _parse_form_mutation_payload(request)
     if parse_error is not None:
         return parse_error
 
@@ -1598,13 +1617,15 @@ def profile_settings(request: HttpRequest) -> JsonResponse:
     avatar_scale_raw = payload.get("avatar_scale")
     avatar_position_x_raw = payload.get("avatar_position_x")
     avatar_position_y_raw = payload.get("avatar_position_y")
-    uploaded_avatar = request.FILES.get("avatar")
+    uploaded_avatar = uploaded_files.get("avatar")
     remove_avatar = _parse_optional_bool(remove_avatar_raw)
 
     if remove_avatar is None and remove_avatar_raw is not None:
         return JsonResponse({"error": "remove_avatar must be boolean"}, status=400)
     if uploaded_avatar is not None and remove_avatar:
         return JsonResponse({"error": "Cannot upload and remove avatar in one request"}, status=400)
+    if not payload and uploaded_avatar is None:
+        return JsonResponse({"error": "No profile fields received"}, status=400)
 
     normalized_avatar_scale = _parse_optional_float(avatar_scale_raw)
     if avatar_scale_raw is not None and normalized_avatar_scale is None:
@@ -2580,13 +2601,13 @@ def admin_update_user_credentials(request: HttpRequest, target_user_id: int) -> 
         online_after = dj_timezone.now() - timedelta(minutes=ONLINE_WINDOW_MINUTES)
         return JsonResponse(_serialize_admin_user_detail(user, online_after=online_after))
 
-    payload, parse_error = _parse_mutation_payload(request)
+    payload, uploaded_files, parse_error = _parse_form_mutation_payload(request)
     if parse_error is not None:
         return parse_error
 
     profile, _ = ChatUserProfile.objects.get_or_create(user_id=target_user_id)
 
-    uploaded_avatar = request.FILES.get("avatar")
+    uploaded_avatar = uploaded_files.get("avatar")
     remove_avatar_raw = payload.get("remove_avatar")
     remove_avatar = _parse_optional_bool(remove_avatar_raw)
     if remove_avatar is None and remove_avatar_raw is not None:
