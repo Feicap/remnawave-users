@@ -38,8 +38,11 @@ export function getAvatarImageStyle(meta?: AvatarPresentation): CSSProperties {
   const offsetY = centerY - halfVisibleSize
 
   return {
+    width: `${scale * 100}%`,
+    height: `${scale * 100}%`,
+    maxWidth: 'none',
     objectPosition: 'center center',
-    transform: `scale(${scale}) translate(${-offsetX}%, ${-offsetY}%)`,
+    transform: `translate(${-offsetX}%, ${-offsetY}%)`,
     transformOrigin: 'top left',
   }
 }

@@ -41,6 +41,10 @@ export default function Profile() {
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
   const [presenceNow, setPresenceNow] = useState(() => Date.now())
   const { totalUnread } = useChatUnreadPing(user)
+  const initialExpiry = new Date('2026-04-04T13:33:00')
+  const now = new Date(presenceNow)
+  const msInDay = 24 * 60 * 60 * 1000
+  const renewPeriodMs = 30 * msInDay
 
   useEffect(() => {
     if (!user) {
@@ -124,6 +128,20 @@ export default function Profile() {
     lastSeenAt && !Number.isNaN(lastSeenAt.getTime())
       ? lastSeenAt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
       : 'нет данных'
+  let nextPaymentAt = initialExpiry
+  if (now.getTime() > initialExpiry.getTime()) {
+    const elapsedMs = now.getTime() - initialExpiry.getTime()
+    const periodsPassed = Math.floor(elapsedMs / renewPeriodMs) + 1
+    nextPaymentAt = new Date(initialExpiry.getTime() + periodsPassed * renewPeriodMs)
+  }
+  const daysLeft = Math.max(0, Math.ceil((nextPaymentAt.getTime() - now.getTime()) / msInDay))
+  const nextPaymentFormatted = nextPaymentAt.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 
   return (
     <div className="flex min-h-screen flex-col md:h-screen md:flex-row">
@@ -249,9 +267,9 @@ export default function Profile() {
               </p>
             </div>
             <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-6 dark:border-[#324467] dark:bg-[#111722]">
-              <p className="text-base font-medium leading-normal text-gray-600 dark:text-white">Доступ</p>
-              <p className="text-2xl font-bold leading-tight tracking-light text-gray-900 dark:text-white">Бессрочно</p>
-              <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">Срок подписки не ограничен этим кабинетом.</p>
+              <p className="text-base font-medium leading-normal text-gray-600 dark:text-white">Следующая оплата</p>
+              <p className="text-2xl font-bold leading-tight tracking-light text-gray-900 dark:text-white">{nextPaymentFormatted}</p>
+              <p className="text-sm font-normal leading-normal text-gray-500 dark:text-[#92a4c9]">Оплата нужна через {daysLeft} дней.</p>
             </div>
           </div>
 
