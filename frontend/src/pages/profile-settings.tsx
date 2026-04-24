@@ -527,7 +527,7 @@ export default function ProfileSettings() {
 
     try {
       const response = await fetch('/api/profile/settings/', {
-        method: 'PATCH',
+        method: 'POST',
         headers: buildAuthHeaders(user),
         body: formData,
       })
